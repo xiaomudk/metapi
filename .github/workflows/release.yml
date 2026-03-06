@@ -112,21 +112,76 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: metapi-dist-${{ github.sha }}
-          path: .
+          path: dist
 
-      - name: Prefetch AppImage tools
-        if: runner.os == 'Linux'
+
+      - name: Normalize downloaded dist layout (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (Test-Path 'dist/desktop/main.js') {
+            exit 0
+          }
+          if (Test-Path 'dist/dist/desktop/main.js') {
+            Copy-Item 'dist/dist/*' 'dist/' -Recurse -Force
+            Remove-Item 'dist/dist' -Recurse -Force
+            exit 0
+          }
+          if ((Test-Path 'desktop/main.js') -or (Test-Path 'web/index.html') -or (Test-Path 'server/index.js')) {
+            New-Item -ItemType Directory -Path 'dist' -Force | Out-Null
+            if (Test-Path 'desktop') { Move-Item 'desktop' 'dist/' -Force }
+            if (Test-Path 'web') { Move-Item 'web' 'dist/' -Force }
+            if (Test-Path 'server') { Move-Item 'server' 'dist/' -Force }
+          }
+          if (-not (Test-Path 'dist/desktop/main.js')) {
+            throw 'Missing dist/desktop/main.js after downloading dist artifact'
+          }
+
+      - name: Normalize downloaded dist layout (Linux/macOS)
+        if: runner.os != 'Windows'
         shell: bash
-        env:
-          APPIMAGE_TOOLS_URL: https://github.com/electron-userland/electron-builder-binaries/releases/download/appimage%401.0.2/appimage-tools-runtime-20251108.tar.gz
         run: |
           set -euo pipefail
-          APPIMAGE_TOOLS_DIR="${{ runner.temp }}/.cache/appimage-tools"
-          if [ -x "$APPIMAGE_TOOLS_DIR/mksquashfs" ]; then
+          if [ -f dist/desktop/main.js ]; then
             exit 0
           fi
-          mkdir -p "$APPIMAGE_TOOLS_DIR"
-          curl -fL --retry 5 --retry-all-errors --retry-delay 5 "$APPIMAGE_TOOLS_URL" | tar -xz -C "$APPIMAGE_TOOLS_DIR"
+          if [ -f dist/dist/desktop/main.js ]; then
+            cp -R dist/dist/. dist/
+            rm -rf dist/dist
+          elif [ -f desktop/main.js ] || [ -f web/index.html ] || [ -f server/index.js ]; then
+            mkdir -p dist
+            [ -d desktop ] && mv desktop dist/
+            [ -d web ] && mv web dist/
+            [ -d server ] && mv server dist/
+          fi
+          test -f dist/desktop/main.js
+
+      - name: Ensure desktop entry exists (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (Test-Path 'dist/desktop/main.js') {
+            Write-Host 'Found dist/desktop/main.js from downloaded artifact.'
+            exit 0
+          }
+          Write-Host 'dist/desktop/main.js missing, rebuilding dist locally...'
+          npm run build
+          if (-not (Test-Path 'dist/desktop/main.js')) {
+            throw 'dist/desktop/main.js is still missing after npm run build'
+          }
+
+      - name: Ensure desktop entry exists (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f dist/desktop/main.js ]; then
+            echo 'Found dist/desktop/main.js from downloaded artifact.'
+            exit 0
+          fi
+          echo 'dist/desktop/main.js missing, rebuilding dist locally...'
+          npm run build
+          test -f dist/desktop/main.js
 
       - name: Build desktop artifacts (Windows)
         if: runner.os == 'Windows'
@@ -145,7 +200,7 @@ jobs:
           if ($env:WIN_CSC_KEY_PASSWORD_INPUT) { $env:WIN_CSC_KEY_PASSWORD = $env:WIN_CSC_KEY_PASSWORD_INPUT }
           for ($attempt = 1; $attempt -le 2; $attempt++) {
             Write-Host "Desktop build attempt $attempt/2"
-            npm run package:desktop
+            npm run package:desktop -- --config.npmRebuild=false
             if ($LASTEXITCODE -eq 0) {
               break
             }
@@ -165,12 +220,11 @@ jobs:
           ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/.cache/electron-builder
           ELECTRON_BUILDER_BINARIES_MIRROR: https://github.com/electron-userland/electron-builder-binaries/releases/download/
           npm_config_electron_builder_binaries_mirror: https://github.com/electron-userland/electron-builder-binaries/releases/download/
-          APPIMAGE_TOOLS_PATH: ${{ runner.temp }}/.cache/appimage-tools
         run: |
           set -euo pipefail
           for attempt in 1 2; do
             echo "Desktop build attempt ${attempt}/2"
-            if npm run package:desktop; then
+            if npm run package:desktop -- --config.npmRebuild=false; then
               break
             fi
             if [ "$attempt" -eq 2 ]; then
@@ -199,7 +253,7 @@ jobs:
           if [ -n "${APPLE_TEAM_ID_INPUT:-}" ]; then export APPLE_TEAM_ID="$APPLE_TEAM_ID_INPUT"; fi
           for attempt in 1 2; do
             echo "Desktop build attempt ${attempt}/2"
-            if npm run package:desktop; then
+            if npm run package:desktop -- --config.npmRebuild=false; then
               break
             fi
             if [ "$attempt" -eq 2 ]; then
