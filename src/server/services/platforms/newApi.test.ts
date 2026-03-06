@@ -26,6 +26,12 @@ const COOKIE_ONLY_LOGIN_SESSION = 'cookie-only-session';
 const COOKIE_SHIELDED_TOKEN = Buffer.from(
   `1771864970|${Buffer.from('username=linuxdo_131936').toString('base64')}|sig`,
 ).toString('base64');
+const COOKIE_GOB_USER_TOKEN = Buffer.from(
+  `1772806887|${Buffer.from(
+    '0d7f040102ff8000011001100000ff93ff80000506737472696e670c060004726f6c6503696e740402000206737472696e670c08000673746174757303696e740402000206737472696e670c07000567726f757006737472696e670c09000764656661756c7406737472696e670c040002696403696e74040500fd04683006737472696e670c0a0008757365726e616d6506737472696e670c09000773756974313539',
+    'hex',
+  ).toString('base64')}|sig`,
+).toString('base64');
 const ANYROUTER_CHALLENGE_HTML = readFileSync(
   new URL('./__fixtures__/anyrouter-challenge.html', import.meta.url),
   'utf8',
@@ -293,6 +299,20 @@ describe('NewApiAdapter', () => {
           return;
         }
 
+        if (typeof req.headers.cookie === 'string' && req.headers.cookie.includes(`session=${COOKIE_GOB_USER_TOKEN}`)) {
+          if (req.headers['new-api-user'] !== '144408') {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, message: 'missing New-Api-User' }));
+            return;
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: true,
+            data: { id: 144408, username: 'suit159', quota: 50000000, used_quota: 0 },
+          }));
+          return;
+        }
+
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, message: 'unauthorized' }));
         return;
@@ -464,6 +484,29 @@ describe('NewApiAdapter', () => {
     ).toBe(true);
     expect(
       requests.some((r) => r.url === '/api/user/self' && r.headers['new-api-user'] === '131936'),
+    ).toBe(true);
+  });
+
+  it('extracts gob-encoded user id from anyrouter session cookie when reading balance', async () => {
+    const adapter = new NewApiAdapter();
+    const balance = await adapter.getBalance(baseUrl, COOKIE_GOB_USER_TOKEN);
+
+    expect(balance.balance).toBe(100);
+    expect(
+      requests.some((r) => r.url === '/api/user/self' && r.headers['new-api-user'] === '144408'),
+    ).toBe(true);
+  });
+
+  it('recovers from mismatched provided user id by probing gob-encoded session payload', async () => {
+    const adapter = new NewApiAdapter();
+    const balance = await adapter.getBalance(baseUrl, COOKIE_GOB_USER_TOKEN, 159);
+
+    expect(balance.balance).toBe(100);
+    expect(
+      requests.some((r) => r.url === '/api/user/self' && r.headers['new-api-user'] === '159'),
+    ).toBe(true);
+    expect(
+      requests.some((r) => r.url === '/api/user/self' && r.headers['new-api-user'] === '144408'),
     ).toBe(true);
   });
 
