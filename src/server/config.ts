@@ -1,4 +1,7 @@
 import 'dotenv/config';
+import type { FastifyServerOptions } from 'fastify';
+
+const DEFAULT_REQUEST_BODY_LIMIT = 20 * 1024 * 1024;
 
 function parseBoolean(value: string | undefined, fallback = false): boolean {
   if (value === undefined) return fallback;
@@ -70,6 +73,7 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
     dbType: parseDbType(env.DB_TYPE),
     dbUrl: (env.DB_URL || '').trim(),
     dbSsl: parseBoolean(env.DB_SSL, false),
+    requestBodyLimit: DEFAULT_REQUEST_BODY_LIMIT,
     routingFallbackUnitCost: Math.max(1e-6, parseNumber(env.ROUTING_FALLBACK_UNIT_COST, 1)),
     tokenRouterCacheTtlMs: Math.max(100, Math.trunc(parseNumber(env.TOKEN_ROUTER_CACHE_TTL_MS, 1_500))),
     proxyLogRetentionDays: Math.max(0, Math.trunc(parseNumber(env.PROXY_LOG_RETENTION_DAYS, 30))),
@@ -85,3 +89,12 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
 }
 
 export const config = buildConfig(process.env);
+
+export function buildFastifyOptions(
+  appConfig: ReturnType<typeof buildConfig>,
+): FastifyServerOptions {
+  return {
+    logger: true,
+    bodyLimit: appConfig.requestBodyLimit,
+  };
+}

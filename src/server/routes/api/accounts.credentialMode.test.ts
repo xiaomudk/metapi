@@ -122,6 +122,9 @@ describe('accounts credential mode', () => {
     expect((accounts[0]?.apiToken || '').startsWith('sk-')).toBe(true);
     expect(accounts[0]?.checkinEnabled).toBe(false);
 
+    const accountTokens = await db.select().from(schema.accountTokens).all();
+    expect(accountTokens).toHaveLength(0);
+
     const parsedExtra = JSON.parse(accounts[0]?.extraConfig || '{}') as { credentialMode?: string };
     expect(parsedExtra.credentialMode).toBe('apikey');
   });

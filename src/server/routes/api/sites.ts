@@ -96,7 +96,6 @@ export async function sitesRoutes(app: FastifyInstance) {
     name: string;
     url: string;
     platform?: string;
-    apiKey?: string;
     proxyUrl?: string | null;
     externalCheckinUrl?: string | null;
     status?: string;
@@ -104,7 +103,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     sortOrder?: number;
     globalWeight?: number;
   } }>('/api/sites', async (request, reply) => {
-    const { name, url, platform, apiKey, proxyUrl, externalCheckinUrl, status, isPinned, sortOrder, globalWeight } = request.body;
+    const { name, url, platform, proxyUrl, externalCheckinUrl, status, isPinned, sortOrder, globalWeight } = request.body;
     const normalizedStatus = normalizeSiteStatus(status);
     if (status !== undefined && !normalizedStatus) {
       return reply.code(400).send({ error: 'Invalid site status. Expected active or disabled.' });
@@ -145,7 +144,6 @@ export async function sitesRoutes(app: FastifyInstance) {
       name,
       url: url.replace(/\/+$/, ''),
       platform: detectedPlatform,
-      apiKey,
       proxyUrl: parsedProxyUrl.proxyUrl,
       externalCheckinUrl: normalizedExternalCheckinUrl.url,
       status: normalizedStatus ?? 'active',
@@ -170,7 +168,6 @@ export async function sitesRoutes(app: FastifyInstance) {
     name?: string;
     url?: string;
     platform?: string;
-    apiKey?: string;
     proxyUrl?: string | null;
     externalCheckinUrl?: string | null;
     status?: string;
@@ -218,7 +215,6 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (body.name !== undefined) updates.name = body.name;
     if (body.url !== undefined) updates.url = body.url.replace(/\/+$/, '');
     if (body.platform !== undefined) updates.platform = body.platform;
-    if (body.apiKey !== undefined) updates.apiKey = body.apiKey;
     if (parsedProxyUrl.present) updates.proxyUrl = parsedProxyUrl.proxyUrl;
     if (normalizedExternalCheckinUrl.present) updates.externalCheckinUrl = normalizedExternalCheckinUrl.url;
     if (body.status !== undefined) updates.status = normalizedStatus;

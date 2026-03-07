@@ -383,7 +383,6 @@ function buildTokenCandidates(input: EstimateProxyCostInput): string[] {
   const candidates = [
     input.account.accessToken,
     input.account.apiToken,
-    input.site.apiKey,
   ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
 
   return Array.from(new Set(candidates));

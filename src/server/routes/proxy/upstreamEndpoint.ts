@@ -955,7 +955,6 @@ export async function resolveUpstreamEndpointCandidates(
         id: context.site.id,
         url: context.site.url,
         platform: context.site.platform,
-        apiKey: context.site.apiKey ?? null,
       },
       account: {
         id: context.account.id,

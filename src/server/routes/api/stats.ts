@@ -332,7 +332,6 @@ export async function statsRoutes(app: FastifyInstance) {
             id: row.sites.id,
             url: row.sites.url,
             platform: row.sites.platform,
-            apiKey: row.sites.apiKey,
           },
           account: {
             id: row.accounts.id,
@@ -663,7 +662,6 @@ export async function statsRoutes(app: FastifyInstance) {
                   id: row.sites.id,
                   url: row.sites.url,
                   platform: row.sites.platform,
-                  apiKey: row.sites.apiKey,
                 },
                 account: {
                   id: row.accounts.id,

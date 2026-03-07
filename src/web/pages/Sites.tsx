@@ -23,7 +23,6 @@ type SiteRow = {
   externalCheckinUrl?: string | null;
   platform?: string;
   status?: string;
-  apiKey?: string;
   proxyUrl?: string | null;
   globalWeight?: number;
   isPinned?: boolean;
@@ -188,7 +187,6 @@ export default function Sites() {
       url: form.url.trim(),
       externalCheckinUrl: form.externalCheckinUrl.trim(),
       platform: form.platform.trim(),
-      apiKey: form.apiKey.trim(),
       proxyUrl: form.proxyUrl.trim(),
       globalWeight: Number(parsedGlobalWeight.toFixed(3)),
     };
@@ -201,8 +199,12 @@ export default function Sites() {
     try {
       const action = buildSiteSaveAction(editor, payload);
       if (action.kind === 'add') {
-        await api.addSite(action.payload);
+        const created = await api.addSite(action.payload);
         toast.success(`站点 "${payload.name}" 已添加`);
+        const createdSiteId = Number(created?.id) || 0;
+        if (createdSiteId > 0) {
+          navigate(`/accounts?segment=apikey&create=1&siteId=${createdSiteId}`);
+        }
       } else {
         await api.updateSite(action.id, action.payload);
         toast.success(`站点 "${payload.name}" 已更新`);
@@ -396,21 +398,6 @@ export default function Sites() {
               placeholder="外部签到/福利站点 URL（可选）"
               value={form.externalCheckinUrl}
               onChange={(e) => setForm((prev) => ({ ...prev, externalCheckinUrl: e.target.value }))}
-              style={{
-                width: '100%',
-                padding: '10px 14px',
-                border: '1px solid var(--color-border)',
-                borderRadius: 'var(--radius-sm)',
-                fontSize: 13,
-                outline: 'none',
-                background: 'var(--color-bg)',
-                color: 'var(--color-text-primary)',
-              }}
-            />
-            <input
-              placeholder="API Key（可选）"
-              value={form.apiKey}
-              onChange={(e) => setForm((prev) => ({ ...prev, apiKey: e.target.value }))}
               style={{
                 width: '100%',
                 padding: '10px 14px',

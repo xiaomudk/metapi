@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import { useToast } from '../components/Toast.js';
 import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
@@ -9,6 +9,9 @@ import { getAccountsAddPanelStyle } from './helpers/accountsPanelStyle.js';
 import { tr } from '../i18n.js';
 
 type SyncStatus = 'success' | 'skipped' | 'failed';
+type TokensPanelProps = {
+  embedded?: boolean;
+};
 
 type AccountTokenSyncResult = {
   status?: string;
@@ -25,8 +28,22 @@ type AccountTokenSyncResult = {
   };
 };
 
+const resolveAccountCredentialMode = (account: any): 'session' | 'apikey' => {
+  const rawMode = String(account?.credentialMode || '').trim().toLowerCase();
+  if (rawMode === 'apikey') return 'apikey';
+  if (rawMode === 'session') return 'session';
+  if (typeof account?.capabilities?.proxyOnly === 'boolean') {
+    return account.capabilities.proxyOnly ? 'apikey' : 'session';
+  }
+  return typeof account?.accessToken === 'string' && account.accessToken.trim()
+    ? 'session'
+    : 'apikey';
+};
+
 const isAccountSyncable = (account: any) =>
-  account?.status === 'active' && account?.site?.status !== 'disabled';
+  resolveAccountCredentialMode(account) === 'session'
+  && account?.status === 'active'
+  && account?.site?.status !== 'disabled';
 
 const resolveSyncStatus = (result: AccountTokenSyncResult | null | undefined): SyncStatus => {
   const raw = String(result?.status || '').toLowerCase();
@@ -83,7 +100,7 @@ function isTruthyFlag(input: string | null): boolean {
   return normalized === '1' || normalized === 'true' || normalized === 'yes';
 }
 
-export default function Tokens() {
+export function TokensPanel({ embedded = false }: TokensPanelProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const initialCreateForm = {
@@ -362,9 +379,9 @@ export default function Tokens() {
   };
 
   return (
-    <div className="animate-fade-in">
+    <div className={embedded ? '' : 'animate-fade-in'}>
       <div className="page-header">
-        <h2 className="page-title">{tr('令牌管理')}</h2>
+        {!embedded ? <h2 className="page-title">{tr('账号令牌')}</h2> : <div />}
         <div className="page-actions">
           <div style={{ minWidth: 220, position: 'relative', zIndex: 20 }}>
             <ModernSelect
@@ -645,4 +662,12 @@ export default function Tokens() {
       </div>
     </div>
   );
+}
+
+export default function Tokens() {
+  const location = useLocation();
+  const params = new URLSearchParams(location.search);
+  params.set('segment', 'tokens');
+  const nextSearch = params.toString();
+  return <Navigate to={`/accounts${nextSearch ? `?${nextSearch}` : ''}`} replace />;
 }

@@ -1,7 +1,7 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
-import { config } from './config.js';
+import { buildFastifyOptions, config } from './config.js';
 import { authMiddleware } from './middleware/auth.js';
 import { sitesRoutes } from './routes/api/sites.js';
 import { accountsRoutes } from './routes/api/accounts.js';
@@ -22,6 +22,7 @@ import { startScheduler } from './services/checkinScheduler.js';
 import { startProxyLogRetentionService, stopProxyLogRetentionService } from './services/proxyLogRetentionService.js';
 import { buildStartupSummaryLines } from './services/startupInfo.js';
 import { repairStoredCreatedAtValues } from './services/storedTimestampRepairService.js';
+import { migrateSiteApiKeysToAccounts } from './services/siteApiKeyMigrationService.js';
 import { isPublicApiRoute, registerDesktopRoutes } from './desktop.js';
 import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -208,13 +209,14 @@ try {
   applyRuntimeSettings(finalMap);
   await ensureProxyLogBillingDetailsColumn();
   await repairStoredCreatedAtValues();
+  await migrateSiteApiKeysToAccounts();
 
   console.log('Loaded runtime settings overrides');
 } catch (error) {
   console.warn(`Failed to load runtime settings overrides: ${(error as Error)?.message || 'unknown error'}`);
 }
 
-const app = Fastify({ logger: true });
+const app = Fastify(buildFastifyOptions(config));
 
 await app.register(cors);
 

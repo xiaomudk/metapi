@@ -66,7 +66,7 @@ describe('Accounts proxy-only expired state', () => {
     try {
       await act(async () => {
         root = create(
-          <MemoryRouter initialEntries={['/accounts']}>
+          <MemoryRouter initialEntries={['/accounts?segment=apikey']}>
             <ToastProvider>
               <Accounts />
             </ToastProvider>

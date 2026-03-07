@@ -13,8 +13,8 @@ const MATCH_LOOKAHEAD_MS = 120_000;
 const MATCH_MAX_CREATED_DELTA_MS = 90_000;
 const MATCH_MAX_LATENCY_DELTA_MS = 12_000;
 const QUOTA_PER_UNIT = 500_000;
-const SUPPORTED_USAGE_FALLBACK_PLATFORMS = new Set(['done-hub', 'one-hub', 'new-api', 'anyrouter']);
-const ALWAYS_LOOKUP_SELF_LOG_PLATFORMS = new Set(['done-hub', 'one-hub', 'anyrouter']);
+const SUPPORTED_USAGE_FALLBACK_PLATFORMS = new Set(['done-hub', 'one-hub', 'new-api', 'anyrouter', 'sub2api']);
+const ALWAYS_LOOKUP_SELF_LOG_PLATFORMS = new Set(['done-hub', 'one-hub', 'anyrouter', 'sub2api']);
 const PLATFORM_REQUIRES_USER_HEADER = new Set(['new-api', 'anyrouter']);
 
 interface ProxyUsage {
@@ -66,10 +66,12 @@ export interface SelfLogBillingMeta {
 export interface SelfLogItem {
   modelName: string;
   tokenName: string;
+  tokenValue?: string;
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
   quota: number;
+  recoveredCost?: number;
   createdAtMs: number;
   requestTimeMs: number;
   billingMeta: SelfLogBillingMeta | null;
@@ -78,6 +80,7 @@ export interface SelfLogItem {
 interface SelfLogMatchInput {
   modelName: string;
   tokenName?: string | null;
+  tokenValue?: string | null;
   requestStartedAtMs: number;
   requestEndedAtMs: number;
   localLatencyMs: number;
@@ -179,6 +182,10 @@ function modelNameMatches(left: string, right: string): boolean {
   return !!leftTail && leftTail === rightTail;
 }
 
+function normalizeTokenMatchValue(value: string | null | undefined): string {
+  return String(value || '').trim();
+}
+
 function getPayloadList(payload: unknown): unknown[] {
   const candidates = [
     payload,
@@ -200,25 +207,57 @@ function mapSelfLogItem(raw: unknown): SelfLogItem | null {
   if (!raw || typeof raw !== 'object') return null;
   const row = raw as Record<string, unknown>;
 
-  const modelName = String(row.model_name ?? row.modelName ?? '').trim();
+  const modelName = String(row.model_name ?? row.modelName ?? row.model ?? '').trim();
   if (!modelName) return null;
 
-  const promptTokens = toPositiveInt(row.prompt_tokens ?? row.promptTokens);
-  const completionTokens = toPositiveInt(row.completion_tokens ?? row.completionTokens);
+  const promptTokens = toPositiveInt(
+    row.prompt_tokens
+      ?? row.promptTokens
+      ?? row.input_tokens
+      ?? row.inputTokens,
+  );
+  const completionTokens = toPositiveInt(
+    row.completion_tokens
+      ?? row.completionTokens
+      ?? row.output_tokens
+      ?? row.outputTokens,
+  );
   const totalTokensRaw = toPositiveInt(row.total_tokens ?? row.totalTokens);
   const totalTokens = totalTokensRaw > 0 ? totalTokensRaw : (promptTokens + completionTokens);
   const createdAtMs = toTimestampMs(row.created_at ?? row.createdAt);
   if (createdAtMs <= 0) return null;
+  const recoveredCost = roundCost(toNumber(row.actual_cost ?? row.actualCost ?? row.total_cost ?? row.totalCost, 0));
+  const rawApiKey = row.api_key ?? row.apiKey;
+  const apiKeyRecord = rawApiKey && typeof rawApiKey === 'object'
+    ? rawApiKey as Record<string, unknown>
+    : null;
+  const tokenName = String(
+    row.token_name
+      ?? row.tokenName
+      ?? apiKeyRecord?.name
+      ?? '',
+  ).trim();
+  const tokenValue = normalizeTokenMatchValue(
+    typeof apiKeyRecord?.key === 'string' ? apiKeyRecord.key : '',
+  );
+  const requestTimeMs = toPositiveInt(
+    row.request_time
+      ?? row.requestTime
+      ?? row.duration_ms
+      ?? row.durationMs,
+  );
 
   return {
     modelName,
-    tokenName: String(row.token_name ?? row.tokenName ?? '').trim(),
+    tokenName,
+    ...(tokenValue ? { tokenValue } : {}),
     promptTokens,
     completionTokens,
     totalTokens,
     quota: toPositiveInt(row.quota),
+    ...(recoveredCost > 0 ? { recoveredCost } : {}),
     createdAtMs,
-    requestTimeMs: toPositiveInt(row.request_time ?? row.requestTime),
+    requestTimeMs,
     billingMeta: parseSelfLogBillingMeta(row.other),
   };
 }
@@ -293,7 +332,6 @@ function buildTokenCandidates(input: ProxyUsageFallbackInput): string[] {
     input.account.accessToken,
     input.tokenValue,
     input.account.apiToken,
-    input.site.apiKey,
   ]
     .map((value) => (typeof value === 'string' ? value.trim() : ''))
     .filter(Boolean);
@@ -313,6 +351,35 @@ async function fetchSelfLogPayload(baseUrl: string, token: string, input: ProxyU
   }, SELF_LOG_FETCH_TIMEOUT_MS);
 
   try {
+    const platform = String(input.site.platform || '').toLowerCase();
+    if (platform === 'sub2api') {
+      const query = new URLSearchParams({
+        page: '1',
+        page_size: String(SELF_LOG_PAGE_SIZE),
+        model: input.modelName,
+      });
+      const response = await fetch(`${baseUrl}/api/v1/usage?${query.toString()}`, withExplicitProxyRequestInit(input.site.proxyUrl, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        signal: controller.signal,
+      }));
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const text = await response.text();
+      if (!text.trim()) return null;
+
+      try {
+        return JSON.parse(text);
+      } catch {
+        return null;
+      }
+    }
+
     const pageSizeParam = String(input.site.platform || '').toLowerCase() === 'anyrouter'
       ? 'page_size'
       : 'size';
@@ -321,7 +388,6 @@ async function fetchSelfLogPayload(baseUrl: string, token: string, input: ProxyU
     const headers: Record<string, string> = {
       Authorization: `Bearer ${token}`,
     };
-    const platform = String(input.site.platform || '').toLowerCase();
     if (PLATFORM_REQUIRES_USER_HEADER.has(platform)) {
       const userId = resolveSelfLogUserId(input);
       if (userId) {
@@ -409,6 +475,14 @@ export function findBestSelfLogMatch(items: SelfLogItem[], input: SelfLogMatchIn
   ));
   if (candidates.length === 0) return null;
 
+  const tokenValue = normalizeTokenMatchValue(input.tokenValue);
+  if (tokenValue) {
+    const tokenValueMatched = candidates.filter((item) => normalizeTokenMatchValue(item.tokenValue) === tokenValue);
+    if (tokenValueMatched.length > 0) {
+      candidates = tokenValueMatched;
+    }
+  }
+
   const tokenName = String(input.tokenName || '').trim().toLowerCase();
   if (tokenName) {
     const tokenMatched = candidates.filter((item) => item.tokenName.trim().toLowerCase() === tokenName);
@@ -450,6 +524,11 @@ function toQuotaCost(quota: number): number {
   return roundCost(toPositiveInt(quota) / QUOTA_PER_UNIT);
 }
 
+function toRecoveredCost(item: SelfLogItem): number {
+  if (typeof item.recoveredCost === 'number' && item.recoveredCost > 0) return item.recoveredCost;
+  return toQuotaCost(item.quota);
+}
+
 export async function resolveProxyUsageWithSelfLogFallback(
   input: ProxyUsageFallbackInput,
 ): Promise<ProxyUsageFallbackResult> {
@@ -471,6 +550,7 @@ export async function resolveProxyUsageWithSelfLogFallback(
     const matched = findBestSelfLogMatch(items, {
       modelName: input.modelName,
       tokenName: input.tokenName,
+      tokenValue: input.tokenValue,
       requestStartedAtMs: input.requestStartedAtMs,
       requestEndedAtMs: input.requestEndedAtMs,
       localLatencyMs: input.localLatencyMs,
@@ -494,7 +574,7 @@ export async function resolveProxyUsageWithSelfLogFallback(
       completionTokens: resolvedTokens.completionTokens,
       totalTokens: resolvedTokens.totalTokens,
       recoveredFromSelfLog: true,
-      estimatedCostFromQuota: toQuotaCost(matched.quota),
+      estimatedCostFromQuota: toRecoveredCost(matched),
       selfLogBillingMeta: matched.billingMeta,
     };
   } catch {

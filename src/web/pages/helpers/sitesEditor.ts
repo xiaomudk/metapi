@@ -3,7 +3,6 @@ export type SiteForm = {
   url: string;
   externalCheckinUrl: string;
   platform: string;
-  apiKey: string;
   proxyUrl: string;
   globalWeight: string;
 };
@@ -17,7 +16,7 @@ type SiteSaveAction =
   | { kind: 'update'; id: number; payload: SiteForm };
 
 export function emptySiteForm(): SiteForm {
-  return { name: '', url: '', externalCheckinUrl: '', platform: '', apiKey: '', proxyUrl: '', globalWeight: '1' };
+  return { name: '', url: '', externalCheckinUrl: '', platform: '', proxyUrl: '', globalWeight: '1' };
 }
 
 export function siteFormFromSite(site: Partial<SiteForm> & {
@@ -32,7 +31,6 @@ export function siteFormFromSite(site: Partial<SiteForm> & {
     url: site.url ?? '',
     externalCheckinUrl: site.externalCheckinUrl ?? '',
     platform: site.platform ?? '',
-    apiKey: site.apiKey ?? '',
     proxyUrl: site.proxyUrl ?? '',
     globalWeight,
   };

@@ -2,7 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { getAdapter } from './platforms/index.js';
 import { ensureDefaultTokenForAccount, getPreferredAccountToken } from './accountTokenService.js';
-import { resolvePlatformUserId } from './accountExtraConfig.js';
+import { getCredentialModeFromExtraConfig, resolvePlatformUserId } from './accountExtraConfig.js';
 import { invalidateTokenRouterCache } from './tokenRouter.js';
 
 const API_TOKEN_DISCOVERY_TIMEOUT_MS = 8_000;
@@ -11,6 +11,12 @@ const MODEL_REFRESH_BATCH_SIZE = 3;
 
 function isSiteDisabled(status?: string | null): boolean {
   return (status || 'active') === 'disabled';
+}
+
+function isApiKeyConnection(account: typeof schema.accounts.$inferSelect): boolean {
+  const explicit = getCredentialModeFromExtraConfig(account.extraConfig);
+  if (explicit && explicit !== 'auto') return explicit === 'apikey';
+  return !(account.accessToken || '').trim();
 }
 
 function normalizeModels(models: string[]): string[] {
@@ -101,7 +107,7 @@ export async function refreshModelsForAccount(accountId: number) {
     .all();
 
   // Last fallback: if still no managed token but account has a legacy apiToken, mirror it into token table.
-  if (enabledTokens.length === 0) {
+  if (!isApiKeyConnection(account) && enabledTokens.length === 0) {
     const fallback = discoveredApiToken || account.apiToken || null;
     if (fallback) {
       ensureDefaultTokenForAccount(account.id, fallback, { name: 'default', source: 'legacy' });

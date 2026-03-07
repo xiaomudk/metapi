@@ -1058,7 +1058,7 @@ export async function accountsRoutes(app: FastifyInstance) {
       return reply.code(500).send({ success: false, message: '创建账号失败' });
     }
 
-    if (apiToken) {
+    if (tokenType === 'session' && apiToken) {
       try {
         await ensureDefaultTokenForAccount(result.id, apiToken, { name: 'default', source: 'manual' });
       } catch { }
@@ -1161,7 +1161,15 @@ export async function accountsRoutes(app: FastifyInstance) {
     updates.updatedAt = new Date().toISOString();
     await db.update(schema.accounts).set(updates).where(eq(schema.accounts.id, id)).run();
 
-    if (typeof updates.apiToken === 'string' && updates.apiToken.trim()) {
+    const nextAccessToken = typeof updates.accessToken === 'string' ? updates.accessToken : account.accessToken;
+    const nextExtraConfig = typeof updates.extraConfig === 'string' ? updates.extraConfig : account.extraConfig;
+    const explicitNextMode = getCredentialModeFromExtraConfig(nextExtraConfig);
+    const nextCredentialMode =
+      explicitNextMode && explicitNextMode !== 'auto'
+        ? explicitNextMode
+        : (hasSessionTokenValue(nextAccessToken) ? 'session' : 'apikey');
+
+    if (nextCredentialMode !== 'apikey' && typeof updates.apiToken === 'string' && updates.apiToken.trim()) {
       try {
         await ensureDefaultTokenForAccount(id, updates.apiToken, { name: 'default', source: 'manual' });
       } catch { }
@@ -1253,4 +1261,3 @@ export async function accountsRoutes(app: FastifyInstance) {
     }
   });
 }
-

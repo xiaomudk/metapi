@@ -835,10 +835,7 @@ export class TokenRouter {
     }
 
     const fallback = candidate.account.apiToken?.trim();
-    if (fallback) return fallback;
-
-    const siteApiKey = candidate.site?.apiKey?.trim();
-    return siteApiKey ? siteApiKey : null;
+    return fallback || null;
   }
 
   private weightedRandomSelect(
