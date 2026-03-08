@@ -256,6 +256,8 @@ export function extractAnthropicUsage(payload: unknown): NormalizedUsage {
     completionTokens: summary.completionTokens,
     totalTokens: summary.totalTokens,
     cachedTokens: summary.cacheReadInputTokens,
+    cacheReadTokens: summary.cacheReadInputTokens,
+    cacheCreationTokens: summary.cacheCreationInputTokens,
     reasoningTokens: 0,
     audioInputTokens: 0,
     audioOutputTokens: 0,

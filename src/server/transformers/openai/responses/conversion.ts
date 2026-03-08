@@ -2,6 +2,7 @@ import {
   normalizeResponsesInputForCompatibility as normalizeResponsesInputForCompatibilityViaCompatibility,
   normalizeResponsesMessageItem,
 } from './compatibility.js';
+import { normalizeInputFileBlock, toOpenAiChatFileBlock } from '../../shared/inputFile.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
@@ -81,6 +82,32 @@ function normalizeIncludeList(value: unknown): unknown {
     .filter((item) => item.length > 0);
 }
 
+function hasReasoningRequest(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const relevantKeys = ['effort', 'budget_tokens', 'budgetTokens', 'max_tokens', 'maxTokens', 'summary'];
+  return relevantKeys.some((key) => {
+    const entry = value[key];
+    if (typeof entry === 'string') return entry.trim().length > 0;
+    return entry !== undefined && entry !== null;
+  });
+}
+
+function ensureEncryptedReasoningInclude(body: Record<string, unknown>): void {
+  if (!hasReasoningRequest(body.reasoning)) return;
+
+  const normalizedInclude = normalizeIncludeList(body.include);
+  const includeList = Array.isArray(normalizedInclude) ? normalizedInclude : [];
+  const alreadyRequested = includeList.some((item) => (
+    typeof item === 'string' && item.trim().toLowerCase() === 'reasoning.encrypted_content'
+  ));
+  if (alreadyRequested) {
+    body.include = includeList;
+    return;
+  }
+
+  body.include = [...includeList, 'reasoning.encrypted_content'];
+}
+
 function normalizeTextConfig(
   rawText: unknown,
   fallbackVerbosity?: unknown,
@@ -147,6 +174,7 @@ function normalizeResponsesRequestFieldParity(
   if (normalized.include !== undefined) {
     normalized.include = normalizeIncludeList(normalized.include);
   }
+  ensureEncryptedReasoningInclude(normalized);
 
   if (normalized.stream_options !== undefined) {
     normalized.stream_options = normalizeStreamOptions(normalized.stream_options);
@@ -594,6 +622,11 @@ function normalizeOpenAiContentBlock(item: Record<string, unknown>): string | Re
     };
   }
 
+  if (type === 'input_file' || type === 'file') {
+    const fileBlock = normalizeInputFileBlock(item);
+    return fileBlock ? toOpenAiChatFileBlock(fileBlock) : null;
+  }
+
   if (type === 'reasoning' || type === 'thinking' || type === 'redacted_reasoning') {
     const text = extractTextContent(item).trim();
     return text ? { type: 'text', text } : null;
@@ -738,15 +771,20 @@ export function convertResponsesBodyToOpenAiBody(
     if (itemType === 'reasoning') {
       flushPendingToolCalls();
       const reasoningContent = toOpenAiMessageContent(item.summary ?? item.content ?? item);
+      const reasoningSignature = asTrimmedString(item.encrypted_content);
       const hasReasoningContent = typeof reasoningContent === 'string'
         ? reasoningContent.trim().length > 0
         : Array.isArray(reasoningContent) && reasoningContent.length > 0;
-      if (!hasReasoningContent) return;
+      if (!hasReasoningContent && !reasoningSignature) return;
 
-      messages.push({
+      const message: Record<string, unknown> = {
         role: 'assistant',
         content: reasoningContent,
-      });
+      };
+      if (reasoningSignature) {
+        message.reasoning_signature = reasoningSignature;
+      }
+      messages.push(message);
       return;
     }
 
@@ -813,6 +851,7 @@ export function convertResponsesBodyToOpenAiBody(
   if (normalizedBody.include !== undefined) payload.include = cloneJsonValue(normalizedBody.include);
   if (normalizedBody.previous_response_id !== undefined) payload.previous_response_id = normalizedBody.previous_response_id;
   if (normalizedBody.truncation !== undefined) payload.truncation = normalizedBody.truncation;
+  if (normalizedBody.reasoning !== undefined) payload.reasoning = cloneJsonValue(normalizedBody.reasoning);
   if (normalizedBody.service_tier !== undefined) payload.service_tier = normalizedBody.service_tier;
   if (normalizedBody.top_logprobs !== undefined) payload.top_logprobs = normalizedBody.top_logprobs;
   if (normalizedBody.stream_options !== undefined) payload.stream_options = normalizedBody.stream_options;

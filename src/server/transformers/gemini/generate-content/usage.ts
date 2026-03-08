@@ -37,6 +37,8 @@ export function extractGeminiUsage(payload: unknown): NormalizedUsage {
     completionTokens,
     totalTokens,
     cachedTokens,
+    cacheReadTokens: cachedTokens,
+    cacheCreationTokens: 0,
     reasoningTokens,
   };
 }

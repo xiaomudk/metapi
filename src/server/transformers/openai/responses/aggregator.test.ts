@@ -109,6 +109,130 @@ describe('serializeConvertedResponsesEvents', () => {
     });
   });
 
+  it('keeps encrypted-only reasoning output items during stream aggregation', () => {
+    const state = createOpenAiResponsesAggregateState('gpt-5');
+    const streamContext = createStreamTransformContext('gpt-5');
+    const usage = {
+      promptTokens: 1,
+      completionTokens: 2,
+      totalTokens: 3,
+    };
+
+    serializeConvertedResponsesEvents({
+      state,
+      streamContext,
+      usage,
+      event: {
+        responsesEventType: 'response.output_item.added',
+        responsesPayload: {
+          type: 'response.output_item.added',
+          output_index: 0,
+          item: {
+            type: 'reasoning',
+            encrypted_content: 'enc-only',
+          },
+        },
+      },
+    });
+
+    const completedLines = serializeConvertedResponsesEvents({
+      state,
+      streamContext,
+      usage,
+      event: {
+        responsesEventType: 'response.completed',
+        responsesPayload: {
+          type: 'response.completed',
+          response: {
+            id: 'resp_enc_only',
+            model: 'gpt-5',
+            usage: {
+              input_tokens: 1,
+              output_tokens: 2,
+              total_tokens: 3,
+            },
+          },
+        },
+      },
+    });
+
+    const payloads = parseSsePayloads(completedLines);
+    const completed = payloads.find((item) => item.type === 'response.completed');
+    expect(completed).toBeTruthy();
+    expect(completed?.response?.output?.[0]).toMatchObject({
+      type: 'reasoning',
+      encrypted_content: 'enc-only',
+    });
+    expect((completed?.response?.output?.[0] as any)?.id).toMatch(/^rs_/);
+  });
+
+  it('starts a synthetic reasoning item when fallback streams only carry encrypted reasoning signatures', () => {
+    const state = createOpenAiResponsesAggregateState('gpt-5');
+    const streamContext = createStreamTransformContext('gpt-5');
+    const usage = {
+      promptTokens: 1,
+      completionTokens: 2,
+      totalTokens: 3,
+    };
+
+    const signatureLines = serializeConvertedResponsesEvents({
+      state,
+      streamContext,
+      usage,
+      event: {
+        reasoningSignature: 'enc-stream-only',
+      } as any,
+    });
+
+    const signaturePayloads = parseSsePayloads(signatureLines);
+    expect(signaturePayloads).toEqual([
+      {
+        type: 'response.output_item.added',
+        output_index: 0,
+        item: {
+          id: 'rs_0',
+          type: 'reasoning',
+          status: 'in_progress',
+          summary: [],
+          encrypted_content: 'enc-stream-only',
+        },
+      },
+    ]);
+
+    const completedLines = serializeConvertedResponsesEvents({
+      state,
+      streamContext,
+      usage,
+      event: {
+        responsesEventType: 'response.completed',
+        responsesPayload: {
+          type: 'response.completed',
+          response: {
+            id: 'resp_enc_stream_only',
+            model: 'gpt-5',
+            usage: {
+              input_tokens: 1,
+              output_tokens: 2,
+              total_tokens: 3,
+            },
+          },
+        },
+      },
+    });
+
+    const payloads = parseSsePayloads(completedLines);
+    const completed = payloads.find((item) => item.type === 'response.completed');
+    expect(completed?.response?.output).toEqual([
+      {
+        id: 'rs_0',
+        type: 'reasoning',
+        status: 'completed',
+        summary: [],
+        encrypted_content: 'enc-stream-only',
+      },
+    ]);
+  });
+
   it('preserves richer image_generation_call fields while aggregating progress events', () => {
     const state = createOpenAiResponsesAggregateState('gpt-5');
     const streamContext = createStreamTransformContext('gpt-5');

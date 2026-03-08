@@ -1,3 +1,5 @@
+import { normalizeInputFileBlock, toResponsesInputFileBlock } from '../../shared/inputFile.js';
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
 }
@@ -77,6 +79,11 @@ function normalizeResponsesContentItem(
       type: 'input_audio',
       input_audio: inputAudio,
     };
+  }
+
+  if (type === 'file' || type === 'input_file') {
+    const fileBlock = normalizeInputFileBlock(item);
+    return fileBlock ? toResponsesInputFileBlock(fileBlock) : null;
   }
 
   if (type === 'function_call' || type === 'function_call_output') {
@@ -191,7 +198,39 @@ export function buildResponsesCompatibilityBodies(
   };
 
   push(stripResponsesMetadata(body));
-  push(buildCoreResponsesBody(body));
+  const coreModel = typeof body.model === 'string' ? body.model.trim() : '';
+  if (coreModel && body.input !== undefined) {
+    const richCandidate: Record<string, unknown> = {
+      model: coreModel,
+      input: body.input,
+      stream: body.stream === true,
+    };
+    const maxOutputTokens = toFiniteNumber(body.max_output_tokens);
+    if (maxOutputTokens !== null && maxOutputTokens > 0) {
+      richCandidate.max_output_tokens = Math.trunc(maxOutputTokens);
+    }
+    const temperature = toFiniteNumber(body.temperature);
+    if (temperature !== null) richCandidate.temperature = temperature;
+    const topP = toFiniteNumber(body.top_p);
+    if (topP !== null) richCandidate.top_p = topP;
+    const instructions = typeof body.instructions === 'string' ? body.instructions.trim() : '';
+    if (instructions) richCandidate.instructions = instructions;
+
+    const passthroughFields = [
+      'reasoning',
+      'safety_identifier',
+      'max_tool_calls',
+      'prompt_cache_key',
+      'prompt_cache_retention',
+      'background',
+      'top_logprobs',
+    ] as const;
+    for (const key of passthroughFields) {
+      if (body[key] === undefined) continue;
+      richCandidate[key] = cloneJsonValue(body[key]);
+    }
+    push(richCandidate);
+  }
   push(buildStrictResponsesBody(body));
   return candidates;
 }
@@ -327,6 +366,18 @@ function toFiniteNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function cloneJsonValue<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((item) => cloneJsonValue(item)) as T;
+  }
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, cloneJsonValue(item)]),
+    ) as T;
+  }
+  return value;
+}
+
 function parseUpstreamErrorShape(rawText: string): {
   type: string;
   code: string;
@@ -382,6 +433,20 @@ function buildCoreResponsesBody(
 
   const instructions = typeof body.instructions === 'string' ? body.instructions.trim() : '';
   if (instructions) core.instructions = instructions;
+
+  const passthroughFields = [
+    'reasoning',
+    'safety_identifier',
+    'max_tool_calls',
+    'prompt_cache_key',
+    'prompt_cache_retention',
+    'background',
+    'top_logprobs',
+  ] as const;
+  for (const key of passthroughFields) {
+    if (body[key] === undefined) continue;
+    core[key] = cloneJsonValue(body[key]);
+  }
 
   return core;
 }

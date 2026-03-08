@@ -1,4 +1,6 @@
 import Fastify, { type FastifyInstance } from 'fastify';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fetchMock = vi.fn();
@@ -42,6 +44,30 @@ function parseSsePayloads(body: string): Array<Record<string, unknown>> {
     .filter((data) => data && data !== '[DONE]')
     .map((data) => JSON.parse(data) as Record<string, unknown>);
 }
+
+function readWorkspaceFile(relativePath: string): string {
+  return readFileSync(path.resolve(process.cwd(), relativePath), 'utf8');
+}
+
+describe('gemini transformer-owned path parsing', () => {
+  it('keeps apiVersion and modelActionPath parsing in transformer helpers', async () => {
+    const geminiRoute = readWorkspaceFile('src/server/routes/proxy/gemini.ts');
+
+    expect(geminiRoute).not.toContain('function resolveGeminiApiVersion(');
+    expect(geminiRoute).not.toContain('function extractGeminiModelActionPath(');
+
+    const { geminiGenerateContentTransformer } = await import('../../transformers/gemini/generate-content/index.js');
+    expect(geminiGenerateContentTransformer.parseProxyRequestPath({
+      rawUrl: '/gemini/v1/models/gemini-2.5-flash:streamGenerateContent?alt=sse',
+      params: { geminiApiVersion: 'v1' },
+    })).toEqual({
+      apiVersion: 'v1',
+      modelActionPath: 'models/gemini-2.5-flash:streamGenerateContent',
+      requestedModel: 'gemini-2.5-flash',
+      isStreamAction: true,
+    });
+  });
+});
 
 describe('gemini native proxy routes', () => {
   let app: FastifyInstance;
@@ -213,6 +239,54 @@ describe('gemini native proxy routes', () => {
         },
       ],
     });
+  });
+
+  it('forwards explicit gemini version paths through transformer-owned parsing helpers', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      candidates: [
+        {
+          content: {
+            parts: [{ text: 'hello from v1 gemini' }],
+            role: 'model',
+          },
+          finishReason: 'STOP',
+        },
+      ],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/gemini/v1/models/gemini-2.5-flash:generateContent?alt=json',
+      headers: {
+        'x-goog-api-key': 'sk-managed-gemini',
+      },
+      payload: {
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: 'hello' }],
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const [targetUrl, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(targetUrl).toContain('/v1/models/gemini-2.5-flash:generateContent');
+    expect(targetUrl).toContain('alt=json');
+    expect(targetUrl).toContain('key=gemini-key');
+    expect(JSON.parse(String(requestInit.body))).toEqual({
+      contents: [
+        {
+          role: 'user',
+          parts: [{ text: 'hello' }],
+        },
+      ],
+    });
+    expect(response.json().candidates?.[0]?.content?.parts?.[0]?.text).toBe('hello from v1 gemini');
   });
 
   it('preserves structured Gemini-native fields instead of narrowing them to a bare passthrough shell', async () => {

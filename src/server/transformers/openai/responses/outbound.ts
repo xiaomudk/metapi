@@ -2,6 +2,7 @@ import {
   normalizeUpstreamFinalResponse,
   type NormalizedFinalResponse,
 } from '../../shared/normalized.js';
+import { decodeOpenAiEncryptedReasoning } from '../../shared/reasoningTransport.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
@@ -301,6 +302,11 @@ export function serializeResponsesFinalPayload(input: {
     if (extracted.length > 0) return extracted;
     return extractToolCallsFromNormalized(normalized);
   })();
+  const rawReasoningSignature = typeof normalized.reasoningSignature === 'string'
+    ? normalized.reasoningSignature.trim()
+    : '';
+  const encryptedReasoning = decodeOpenAiEncryptedReasoning(rawReasoningSignature)
+    ?? (rawReasoningSignature && !rawReasoningSignature.startsWith('metapi:') ? rawReasoningSignature : null);
   const annotations = extractAnnotationsFromUpstream(upstreamPayload);
 
   const output: Array<Record<string, unknown>> = syntheticOutput.map((item) => cloneJson(item));
@@ -317,16 +323,22 @@ export function serializeResponsesFinalPayload(input: {
     );
   });
 
-  if (normalized.reasoningContent && !hasReasoningItem) {
-    output.push({
+  if ((normalized.reasoningContent || encryptedReasoning) && !hasReasoningItem) {
+    const reasoningItem: Record<string, unknown> = {
       id: ensureMessageId(`${normalizedId}_reasoning`),
       type: 'reasoning',
       status: 'completed',
-      summary: [{
-        type: 'summary_text',
-        text: normalized.reasoningContent,
-      }],
-    });
+      summary: normalized.reasoningContent
+        ? [{
+          type: 'summary_text',
+          text: normalized.reasoningContent,
+        }]
+        : [],
+    };
+    if (encryptedReasoning) {
+      reasoningItem.encrypted_content = encryptedReasoning;
+    }
+    output.push(reasoningItem);
   }
 
   if ((normalized.content || (!hasToolLikeItem && output.length === 0 && toolCalls.length === 0)) && !hasMessageItem) {

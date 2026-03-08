@@ -248,4 +248,77 @@ describe('serializeResponsesFinalPayload', () => {
       },
     });
   });
+
+  it('restores encrypted reasoning content from provider-tagged reasoning signatures', () => {
+    const payload = serializeResponsesFinalPayload({
+      upstreamPayload: {
+        id: 'chatcmpl_reasoning',
+        model: 'gpt-5',
+      },
+      normalized: {
+        id: 'chatcmpl_reasoning',
+        model: 'gpt-5',
+        created: 1700000000,
+        content: '',
+        reasoningContent: 'Think step by step',
+        reasoningSignature: 'metapi:openai-encrypted-reasoning:enc-sig-1',
+        finishReason: 'stop',
+        toolCalls: [],
+      } as any,
+      usage: {
+        promptTokens: 1,
+        completionTokens: 2,
+        totalTokens: 3,
+      },
+    });
+
+    expect(payload.output).toEqual([
+      {
+        id: 'msg_chatcmpl_reasoning_reasoning',
+        type: 'reasoning',
+        status: 'completed',
+        encrypted_content: 'enc-sig-1',
+        summary: [
+          {
+            type: 'summary_text',
+            text: 'Think step by step',
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('emits encrypted-only reasoning items when summary text is empty', () => {
+    const payload = serializeResponsesFinalPayload({
+      upstreamPayload: {
+        id: 'chatcmpl_reasoning_only',
+        model: 'gpt-5',
+      },
+      normalized: {
+        id: 'chatcmpl_reasoning_only',
+        model: 'gpt-5',
+        created: 1700000000,
+        content: '',
+        reasoningContent: '',
+        reasoningSignature: 'metapi:openai-encrypted-reasoning:enc-only-1',
+        finishReason: 'stop',
+        toolCalls: [],
+      } as any,
+      usage: {
+        promptTokens: 1,
+        completionTokens: 2,
+        totalTokens: 3,
+      },
+    });
+
+    expect(payload.output).toEqual([
+      {
+        id: 'msg_chatcmpl_reasoning_only_reasoning',
+        type: 'reasoning',
+        status: 'completed',
+        encrypted_content: 'enc-only-1',
+        summary: [],
+      },
+    ]);
+  });
 });

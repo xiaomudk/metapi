@@ -24,6 +24,7 @@ export type NormalizedContentBlockType =
   | 'text'
   | 'image_url'
   | 'image_inline'
+  | 'input_file'
   | 'input_audio'
   | 'output_audio'
   | 'tool_call'
@@ -39,6 +40,8 @@ export type NormalizedContentBlock = {
   mimeType?: string | null;
   url?: string | null;
   data?: string | null;
+  fileId?: string | null;
+  filename?: string | null;
   toolName?: string | null;
   toolCallId?: string | null;
   argumentsText?: string | null;
@@ -51,6 +54,8 @@ export type NormalizedUsage = {
   completionTokens?: number | null;
   totalTokens?: number | null;
   cachedTokens?: number | null;
+  cacheReadTokens?: number | null;
+  cacheCreationTokens?: number | null;
   reasoningTokens?: number | null;
   audioInputTokens?: number | null;
   audioOutputTokens?: number | null;
@@ -66,13 +71,17 @@ export type ParsedDownstreamChatRequestResult = {
 export type TransformerMetadata = {
   include?: unknown;
   maxToolCalls?: number | null;
+  promptCacheKey?: unknown;
   promptCacheRetention?: unknown;
+  truncation?: unknown;
+  serviceTier?: unknown;
   includeObfuscation?: boolean | null;
   citations?: unknown;
   annotations?: unknown;
   geminiSafetySettings?: unknown;
   geminiImageConfig?: unknown;
   thoughtSignature?: string | null;
+  thoughtSignatures?: string[];
   passthrough?: Record<string, unknown>;
 };
 
@@ -108,6 +117,8 @@ export function createEmptyNormalizedUsage(): NormalizedUsage {
     completionTokens: 0,
     totalTokens: 0,
     cachedTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
     reasoningTokens: 0,
     audioInputTokens: 0,
     audioOutputTokens: 0,
@@ -127,6 +138,8 @@ export function mergeNormalizedUsage(
     completionTokens: (merged.completionTokens || 0) + (incoming.completionTokens || 0),
     totalTokens: (merged.totalTokens || 0) + (incoming.totalTokens || 0),
     cachedTokens: (merged.cachedTokens || 0) + (incoming.cachedTokens || 0),
+    cacheReadTokens: (merged.cacheReadTokens || 0) + (incoming.cacheReadTokens || 0),
+    cacheCreationTokens: (merged.cacheCreationTokens || 0) + (incoming.cacheCreationTokens || 0),
     reasoningTokens: (merged.reasoningTokens || 0) + (incoming.reasoningTokens || 0),
     audioInputTokens: (merged.audioInputTokens || 0) + (incoming.audioInputTokens || 0),
     audioOutputTokens: (merged.audioOutputTokens || 0) + (incoming.audioOutputTokens || 0),

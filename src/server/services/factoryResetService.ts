@@ -19,6 +19,7 @@ async function clearAllBusinessData() {
     await tx.delete(schema.modelAvailability).run();
     await tx.delete(schema.proxyLogs).run();
     await tx.delete(schema.proxyVideoTasks).run();
+    await tx.delete(schema.proxyFiles).run();
     await tx.delete(schema.checkinLogs).run();
     await tx.delete(schema.accountTokens).run();
     await tx.delete(schema.accounts).run();

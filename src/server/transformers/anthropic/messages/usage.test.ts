@@ -19,6 +19,8 @@ describe('extractAnthropicUsage', () => {
       completionTokens: 30,
       totalTokens: 130,
       cachedTokens: 12,
+      cacheReadTokens: 12,
+      cacheCreationTokens: 0,
       reasoningTokens: 0,
       audioInputTokens: 0,
       audioOutputTokens: 0,

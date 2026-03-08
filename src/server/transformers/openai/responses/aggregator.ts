@@ -218,7 +218,9 @@ function ensureReasoningItem(
   indexHint?: unknown,
 ): { index: number; item: AggregateOutputItem; created: boolean } {
   const itemId = asTrimmedString(itemIdRaw);
-  const existingIndex = itemId ? state.reasoningIndexById[itemId] : undefined;
+  const existingIndex = itemId
+    ? state.reasoningIndexById[itemId]
+    : Object.values(state.reasoningIndexById)[0];
   const index = existingIndex ?? resolveOutputIndex(state, indexHint, itemId);
   const created = !state.outputItems[index];
   const item = ensureOutputItem(state, index, () => ({
@@ -236,7 +238,15 @@ function ensureReasoningSummaryPart(
   itemIdRaw: unknown,
   summaryIndexRaw: unknown,
   indexHint?: unknown,
-): { item: AggregateOutputItem; summary: AggregateOutputItem; index: number; summaryIndex: number; created: boolean } {
+): {
+  item: AggregateOutputItem;
+  summary: AggregateOutputItem;
+  index: number;
+  summaryIndex: number;
+  created: boolean;
+  itemCreated: boolean;
+  partCreated: boolean;
+} {
   const reasoningState = ensureReasoningItem(state, itemIdRaw, indexHint);
   const summaryIndex = typeof summaryIndexRaw === 'number' && Number.isFinite(summaryIndexRaw)
     ? Math.max(0, Math.trunc(summaryIndexRaw))
@@ -244,12 +254,20 @@ function ensureReasoningSummaryPart(
   const summary = Array.isArray(reasoningState.item.summary) ? reasoningState.item.summary as AggregateOutputItem[] : [];
   if (!Array.isArray(reasoningState.item.summary)) reasoningState.item.summary = summary;
   let part = summary[summaryIndex];
-  const created = !isRecord(part);
+  const partCreated = !isRecord(part);
   if (!isRecord(part)) {
     part = { type: 'summary_text', text: '' };
     summary[summaryIndex] = part;
   }
-  return { item: reasoningState.item, summary: part, index: reasoningState.index, summaryIndex, created: reasoningState.created || created };
+  return {
+    item: reasoningState.item,
+    summary: part,
+    index: reasoningState.index,
+    summaryIndex,
+    created: reasoningState.created || partCreated,
+    itemCreated: reasoningState.created,
+    partCreated,
+  };
 }
 
 function ensureFunctionCallItem(
@@ -458,6 +476,23 @@ function applyOriginalResponsesPayload(
       const outputIndex = resolveOutputIndex(state, payload.output_index, (payload.item as Record<string, unknown> | undefined)?.id);
       const item = cloneRecord(payload.item) || {};
       if (Object.keys(item).length > 0) {
+        const itemType = asTrimmedString(item.type).toLowerCase();
+        if (itemType === 'reasoning') {
+          const reasoningState = ensureReasoningItem(state, item.id, outputIndex);
+          const next = {
+            ...reasoningState.item,
+            ...item,
+          };
+          if ((!Array.isArray(item.summary) || item.summary.length === 0) && Array.isArray(reasoningState.item.summary)) {
+            next.summary = reasoningState.item.summary;
+          }
+          setOutputItem(state, reasoningState.index, next);
+          return serializeOriginalResponsesEvent(eventType, {
+            ...payload,
+            output_index: reasoningState.index,
+            item: state.outputItems[reasoningState.index] ?? payload.item,
+          });
+        }
         const existing = isRecord(state.outputItems[outputIndex]) ? cloneRecord(state.outputItems[outputIndex]) || {} : {};
         const next = {
           ...existing,
@@ -641,19 +676,47 @@ function buildSyntheticMessageEvents(
 
 function buildSyntheticReasoningEvents(
   state: OpenAiResponsesAggregateState,
-  delta: string,
+  delta?: string,
+  reasoningSignature?: string,
 ): string[] {
-  const summaryState = ensureReasoningSummaryPart(state, '', 0, state.outputItems.length);
-  const itemId = asTrimmedString(summaryState.item.id);
   const lines: string[] = [];
+  const signature = asTrimmedString(reasoningSignature);
+  const reasoningState = (signature || delta)
+    ? ensureReasoningItem(state, '', state.outputItems.length)
+    : null;
+
+  if (reasoningState && signature) {
+    reasoningState.item.encrypted_content = signature;
+    if (reasoningState.created) {
+      lines.push(serializeSse('response.output_item.added', {
+        type: 'response.output_item.added',
+        output_index: reasoningState.index,
+        item: reasoningState.item,
+      }));
+    }
+  }
+
+  if (!delta) {
+    return lines;
+  }
+
+  const summaryState = ensureReasoningSummaryPart(
+    state,
+    reasoningState?.item.id ?? '',
+    0,
+    reasoningState?.index ?? state.outputItems.length,
+  );
+  const itemId = asTrimmedString(summaryState.item.id);
   const currentText = typeof summaryState.summary.text === 'string' ? summaryState.summary.text : '';
   const novelDelta = computeNovelDelta(currentText, delta);
-  if (summaryState.created) {
+  if (summaryState.itemCreated && !reasoningState?.created) {
     lines.push(serializeSse('response.output_item.added', {
       type: 'response.output_item.added',
       output_index: summaryState.index,
       item: summaryState.item,
     }));
+  }
+  if (summaryState.partCreated) {
     lines.push(serializeSse('response.reasoning_summary_part.added', {
       type: 'response.reasoning_summary_part.added',
       item_id: itemId,
@@ -728,8 +791,8 @@ export function serializeConvertedResponsesEvents(input: {
   if (event.contentDelta) {
     lines.push(...buildSyntheticMessageEvents(state, event.contentDelta));
   }
-  if (event.reasoningDelta) {
-    lines.push(...buildSyntheticReasoningEvents(state, event.reasoningDelta));
+  if (event.reasoningDelta || event.reasoningSignature) {
+    lines.push(...buildSyntheticReasoningEvents(state, event.reasoningDelta, event.reasoningSignature));
   }
   lines.push(...buildSyntheticToolEvents(state, event));
   return lines;

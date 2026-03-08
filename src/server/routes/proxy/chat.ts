@@ -30,6 +30,12 @@ import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { resolveProxyLogBilling } from './proxyBilling.js';
 import { openAiChatTransformer } from '../../transformers/openai/chat/index.js';
 import { anthropicMessagesTransformer } from '../../transformers/anthropic/messages/index.js';
+import { getProxyResourceOwner } from '../../middleware/auth.js';
+import {
+  ProxyInputFileResolutionError,
+  hasNonImageFileInputInOpenAiBody,
+  resolveOpenAiBodyInputFiles,
+} from '../../services/proxyInputFileResolver.js';
 
 const MAX_RETRIES = 2;
 
@@ -64,6 +70,19 @@ async function handleChatProxyRequest(
   const downstreamPath = downstreamFormat === 'claude' ? '/v1/messages' : '/v1/chat/completions';
   if (!await ensureModelAllowedForDownstreamKey(request, reply, requestedModel)) return;
   const downstreamPolicy = getDownstreamRoutingPolicy(request);
+  const owner = getProxyResourceOwner(request);
+  let resolvedOpenAiBody = upstreamBody;
+  if (owner) {
+    try {
+      resolvedOpenAiBody = await resolveOpenAiBodyInputFiles(upstreamBody, owner);
+    } catch (error) {
+      if (error instanceof ProxyInputFileResolutionError) {
+        return reply.code(error.statusCode).send(error.payload);
+      }
+      throw error;
+    }
+  }
+  const hasNonImageFileInput = hasNonImageFileInputInOpenAiBody(resolvedOpenAiBody);
 
   const excludeChannelIds: number[] = [];
   let retryCount = 0;
@@ -91,17 +110,20 @@ async function handleChatProxyRequest(
     excludeChannelIds.push(selected.channel.id);
 
     const modelName = selected.actualModel || requestedModel;
-    const endpointCandidates = [
-      ...await resolveUpstreamEndpointCandidates(
-      {
-        site: selected.site,
-        account: selected.account,
-      },
-      modelName,
-      downstreamFormat,
-      requestedModel,
-      ),
-    ];
+      const endpointCandidates = [
+        ...await resolveUpstreamEndpointCandidates(
+        {
+          site: selected.site,
+          account: selected.account,
+        },
+        modelName,
+        downstreamFormat,
+        requestedModel,
+        {
+          hasNonImageFileInput,
+        },
+        ),
+      ];
     let startTime = Date.now();
 
     try {
@@ -117,7 +139,7 @@ async function handleChatProxyRequest(
             tokenValue: selected.tokenValue,
             sitePlatform: selected.site.platform,
             siteUrl: selected.site.url,
-            openaiBody: upstreamBody,
+            openaiBody: resolvedOpenAiBody,
             downstreamFormat,
             claudeOriginalBody,
             downstreamHeaders: request.headers as Record<string, unknown>,
@@ -143,9 +165,10 @@ async function handleChatProxyRequest(
               tokenValue: selected.tokenValue,
               sitePlatform: selected.site.platform,
               siteUrl: selected.site.url,
-              openaiBody: upstreamBody,
+              openaiBody: resolvedOpenAiBody,
               downstreamFormat,
-              claudeOriginalBody: undefined,
+              claudeOriginalBody,
+              forceNormalizeClaudeBody: true,
               downstreamHeaders: request.headers as Record<string, unknown>,
             });
             const normalizedTargetUrl = `${selected.site.url}${normalizedClaudeRequest.path}`;

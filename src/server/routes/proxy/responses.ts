@@ -22,11 +22,41 @@ import { composeProxyLogMessage } from './logPathMeta.js';
 import { executeEndpointFlow, withUpstreamPath } from './endpointFlow.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { resolveProxyLogBilling } from './proxyBilling.js';
+import { getProxyResourceOwner } from '../../middleware/auth.js';
+import {
+  ProxyInputFileResolutionError,
+  hasNonImageFileInputInOpenAiBody,
+  resolveOpenAiBodyInputFiles,
+  resolveResponsesBodyInputFiles,
+} from '../../services/proxyInputFileResolver.js';
 
 const MAX_RETRIES = 2;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
+}
+
+function hasResponsesReasoningRequest(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const relevantKeys = ['effort', 'budget_tokens', 'budgetTokens', 'max_tokens', 'maxTokens', 'summary'];
+  return relevantKeys.some((key) => {
+    const entry = value[key];
+    if (typeof entry === 'string') return entry.trim().length > 0;
+    return entry !== undefined && entry !== null;
+  });
+}
+
+function wantsNativeResponsesReasoning(body: unknown): boolean {
+  if (!isRecord(body)) return false;
+
+  const include = Array.isArray(body.include)
+    ? body.include
+    : (typeof body.include === 'string' ? [body.include] : []);
+
+  return include.some((item) => (
+    typeof item === 'string'
+    && item.trim().toLowerCase() === 'reasoning.encrypted_content'
+  )) || hasResponsesReasoningRequest(body.reasoning);
 }
 
 type UsageSummary = ReturnType<typeof parseProxyUsage>;
@@ -74,6 +104,22 @@ export async function responsesProxyRoute(app: FastifyInstance) {
 
       const modelName = selected.actualModel || requestedModel;
       const openAiBody = openAiResponsesTransformer.inbound.toOpenAiBody(body, modelName, isStream);
+      const owner = getProxyResourceOwner(request);
+      let resolvedOpenAiBody = openAiBody;
+      let resolvedResponsesBody = body;
+      if (owner) {
+        try {
+          resolvedOpenAiBody = await resolveOpenAiBodyInputFiles(openAiBody, owner);
+          resolvedResponsesBody = await resolveResponsesBodyInputFiles(body, owner);
+        } catch (error) {
+          if (error instanceof ProxyInputFileResolutionError) {
+            return reply.code(error.statusCode).send(error.payload);
+          }
+          throw error;
+        }
+      }
+      const hasNonImageFileInput = hasNonImageFileInputInOpenAiBody(resolvedOpenAiBody);
+      const prefersNativeResponsesReasoning = wantsNativeResponsesReasoning(resolvedResponsesBody);
       const endpointCandidates = await resolveUpstreamEndpointCandidates(
         {
           site: selected.site,
@@ -82,6 +128,10 @@ export async function responsesProxyRoute(app: FastifyInstance) {
         modelName,
         'responses',
         requestedModel,
+        {
+          hasNonImageFileInput,
+          wantsNativeResponsesReasoning: prefersNativeResponsesReasoning,
+        },
       );
       if (endpointCandidates.length === 0) {
         endpointCandidates.push('responses', 'chat', 'messages');
@@ -102,9 +152,9 @@ export async function responsesProxyRoute(app: FastifyInstance) {
               tokenValue: selected.tokenValue,
               sitePlatform: selected.site.platform,
               siteUrl: selected.site.url,
-              openaiBody: openAiBody,
+              openaiBody: resolvedOpenAiBody,
               downstreamFormat: 'responses',
-              responsesOriginalBody: body,
+              responsesOriginalBody: resolvedResponsesBody,
               downstreamHeaders: request.headers as Record<string, unknown>,
             });
             const upstreamPath = (

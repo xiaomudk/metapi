@@ -123,7 +123,9 @@ function sanitizeAnthropicInboundBody(
   const toolChoiceError = validateToolChoice(body);
   if (toolChoiceError) return { error: toolChoiceError };
 
-  const validation = validateAnthropicMessagesBody(body);
+  const validation = validateAnthropicMessagesBody(body, {
+    autoOptimizeCacheControls: false,
+  });
   if (validation.error) {
     return { error: validation.error };
   }

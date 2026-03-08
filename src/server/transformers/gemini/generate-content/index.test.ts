@@ -570,6 +570,8 @@ describe('extractGeminiUsage', () => {
       completionTokens: 10,
       totalTokens: 18,
       cachedTokens: 5,
+      cacheReadTokens: 5,
+      cacheCreationTokens: 0,
       reasoningTokens: 3,
     });
   });

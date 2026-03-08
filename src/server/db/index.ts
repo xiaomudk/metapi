@@ -7,6 +7,7 @@ import { drizzle as drizzlePgProxy } from 'drizzle-orm/pg-proxy';
 import * as schema from './schema.js';
 import { ensureSiteSchemaCompatibility, type SiteSchemaInspector } from './siteSchemaCompatibility.js';
 import { ensureRouteGroupingSchemaCompatibility } from './routeGroupingSchemaCompatibility.js';
+import { ensureProxyFileSchemaCompatibility } from './proxyFileSchemaCompatibility.js';
 import { config } from '../config.js';
 import { mkdirSync } from 'fs';
 import { dirname, resolve } from 'path';
@@ -25,6 +26,7 @@ const TABLES_WITH_NUMERIC_ID = new Set([
   'route_channels',
   'proxy_logs',
   'proxy_video_tasks',
+  'proxy_files',
   'downstream_api_keys',
   'events',
 ]);
@@ -180,6 +182,35 @@ function ensureProxyVideoTaskSchema() {
   sqlite.exec(`
     CREATE INDEX IF NOT EXISTS proxy_video_tasks_upstream_video_id_idx
     ON proxy_video_tasks(upstream_video_id);
+  `);
+}
+
+function ensureProxyFileSchema() {
+  const sqlite = requireSqliteConnection();
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS proxy_files (
+      id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+      public_id text NOT NULL,
+      owner_type text NOT NULL,
+      owner_id text NOT NULL,
+      filename text NOT NULL,
+      mime_type text NOT NULL,
+      purpose text,
+      byte_size integer NOT NULL,
+      sha256 text NOT NULL,
+      content_base64 text NOT NULL,
+      created_at text DEFAULT (datetime('now')),
+      updated_at text DEFAULT (datetime('now')),
+      deleted_at text
+    );
+  `);
+  sqlite.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS proxy_files_public_id_unique
+    ON proxy_files(public_id);
+  `);
+  sqlite.exec(`
+    CREATE INDEX IF NOT EXISTS proxy_files_owner_lookup_idx
+    ON proxy_files(owner_type, owner_id, deleted_at);
   `);
 }
 
@@ -353,6 +384,12 @@ export async function ensureRouteGroupingCompatibilityColumns(): Promise<void> {
   const inspector = createRuntimeSchemaInspector();
   if (!inspector) return;
   await ensureRouteGroupingSchemaCompatibility(inspector);
+}
+
+export async function ensureProxyFileCompatibilityColumns(): Promise<void> {
+  const inspector = createRuntimeSchemaInspector();
+  if (!inspector) return;
+  await ensureProxyFileSchemaCompatibility(inspector);
 }
 
 function ensureRouteGroupingSchema() {
@@ -770,6 +807,7 @@ function initSqliteDb() {
   ensureDownstreamApiKeySchema();
   ensureProxyLogBillingDetailsSchema();
   ensureProxyVideoTaskSchema();
+  ensureProxyFileSchema();
 
   const rawDb = drizzleSqliteProxy(
     (sqlText, params, method) => sqliteProxyQuery(sqlText, params, method as SqlMethod),

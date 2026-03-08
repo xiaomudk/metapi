@@ -523,6 +523,8 @@ describe('Gemini aggregate/outbound/usage', () => {
       completionTokens: 11,
       totalTokens: 31,
       cachedTokens: 4,
+      cacheReadTokens: 4,
+      cacheCreationTokens: 0,
       reasoningTokens: 4,
     });
     expect(extractGeminiUsage(serialized)).toEqual({
@@ -530,6 +532,8 @@ describe('Gemini aggregate/outbound/usage', () => {
       completionTokens: 11,
       totalTokens: 31,
       cachedTokens: 4,
+      cacheReadTokens: 4,
+      cacheCreationTokens: 0,
       reasoningTokens: 4,
     });
   });
@@ -550,6 +554,8 @@ describe('Gemini aggregate/outbound/usage', () => {
       completionTokens: 6,
       totalTokens: 6,
       cachedTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
       reasoningTokens: 0,
     });
   });

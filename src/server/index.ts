@@ -30,6 +30,7 @@ import { fileURLToPath } from 'url';
 import { dirname, normalize, resolve, sep } from 'path';
 import {
   db,
+  ensureProxyFileCompatibilityColumns,
   ensureProxyLogBillingDetailsColumn,
   ensureRouteGroupingCompatibilityColumns,
   ensureSiteCompatibilityColumns,
@@ -219,6 +220,7 @@ try {
 
   await ensureSiteCompatibilityColumns();
   await ensureRouteGroupingCompatibilityColumns();
+  await ensureProxyFileCompatibilityColumns();
   const finalRows = await db.select().from(schema.settings).all();
   const finalMap = toSettingsMap(finalRows);
   applyRuntimeSettings(finalMap);

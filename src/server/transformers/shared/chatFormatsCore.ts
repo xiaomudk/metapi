@@ -1,3 +1,7 @@
+import {
+  decodeAnthropicReasoningSignature,
+} from './reasoningTransport.js';
+
 export type DownstreamFormat = 'openai' | 'claude';
 
 export type ParsedSseEvent = {
@@ -32,6 +36,8 @@ export type NormalizedStreamEvent = {
   role?: 'assistant';
   contentDelta?: string;
   reasoningDelta?: string;
+  reasoningSignature?: string;
+  redactedReasoningContent?: string;
   toolCallDeltas?: Array<{
     index: number;
     id?: string;
@@ -48,6 +54,8 @@ export type NormalizedFinalResponse = {
   created: number;
   content: string;
   reasoningContent: string;
+  reasoningSignature?: string;
+  redactedReasoningContent?: string;
   finishReason: string;
   toolCalls: Array<{
     id: string;
@@ -746,6 +754,9 @@ export function normalizeUpstreamStreamEvent(
       || (typeof (delta as any).reasoning === 'string' ? (delta as any).reasoning : '')
       || deltaParsed.reasoning
       || '';
+    const reasoningSignature = isNonEmptyString((delta as any).reasoning_signature)
+      ? (delta as any).reasoning_signature
+      : undefined;
 
     // Some upstream providers (e.g. certain OpenAI-compatible aggregators) emit thinking
     // tokens with the same text duplicated in both delta.content and delta.reasoning_content.
@@ -791,6 +802,7 @@ export function normalizeUpstreamStreamEvent(
       role: (delta as any).role === 'assistant' ? 'assistant' : undefined,
       contentDelta: contentDelta || undefined,
       reasoningDelta: reasoningDelta || undefined,
+      reasoningSignature,
       toolCallDeltas: toolCallDeltas.length > 0 ? toolCallDeltas : undefined,
       finishReason: normalizeStopReason(choice?.finish_reason),
     };
@@ -830,6 +842,11 @@ export function normalizeUpstreamStreamEvent(
 
   if (type === 'response.output_item.added' && isRecord((payload as any).item)) {
     const item = (payload as any).item as Record<string, unknown>;
+    if (item.type === 'reasoning' && isNonEmptyString(item.encrypted_content)) {
+      return {
+        reasoningSignature: item.encrypted_content,
+      };
+    }
     if (item.type === 'function_call') {
       const outputIndex = (
         typeof (payload as any).output_index === 'number' && Number.isFinite((payload as any).output_index)
@@ -1371,13 +1388,29 @@ export function serializeFinalResponse(
   usage: { promptTokens: number; completionTokens: number; totalTokens: number },
 ): Record<string, unknown> {
   const toolCalls = Array.isArray(normalized.toolCalls) ? normalized.toolCalls : [];
+  const rawReasoningSignature = typeof normalized.reasoningSignature === 'string'
+    ? normalized.reasoningSignature.trim()
+    : '';
+  const taggedReasoningSignature = rawReasoningSignature.startsWith('metapi:');
+  const claudeReasoningSignature = decodeAnthropicReasoningSignature(rawReasoningSignature)
+    ?? (rawReasoningSignature && !taggedReasoningSignature ? rawReasoningSignature : null);
 
   if (downstreamFormat === 'claude') {
     const contentBlocks: Array<Record<string, unknown>> = [];
     if (normalized.reasoningContent) {
-      contentBlocks.push({
+      const thinkingBlock: Record<string, unknown> = {
         type: 'thinking',
         thinking: normalized.reasoningContent,
+      };
+      if (claudeReasoningSignature) {
+        thinkingBlock.signature = claudeReasoningSignature;
+      }
+      contentBlocks.push(thinkingBlock);
+    }
+    if (normalized.redactedReasoningContent) {
+      contentBlocks.push({
+        type: 'redacted_thinking',
+        data: normalized.redactedReasoningContent,
       });
     }
     if (normalized.content) {
@@ -1421,6 +1454,9 @@ export function serializeFinalResponse(
   };
   if (normalized.reasoningContent) {
     message.reasoning_content = normalized.reasoningContent;
+  }
+  if (rawReasoningSignature) {
+    message.reasoning_signature = rawReasoningSignature;
   }
   if (toolCalls.length > 0) {
     message.tool_calls = toOpenAiToolCalls(toolCalls);
@@ -1469,6 +1505,9 @@ export function buildSyntheticOpenAiChunks(normalized: NormalizedFinalResponse):
   }
   if (normalized.reasoningContent) {
     startDelta.reasoning_content = normalized.reasoningContent;
+  }
+  if (typeof normalized.reasoningSignature === 'string' && normalized.reasoningSignature.trim()) {
+    startDelta.reasoning_signature = normalized.reasoningSignature.trim();
   }
   if (toolCalls.length > 0) {
     startDelta.tool_calls = toOpenAiToolCalls(toolCalls);

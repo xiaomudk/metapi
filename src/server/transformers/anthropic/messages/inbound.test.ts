@@ -60,4 +60,97 @@ describe('anthropicMessagesInbound', () => {
       tool_choice: { type: 'tool', name: 'lookup' },
     });
   });
+
+  it('preserves already-native anthropic block shapes and cache markers', () => {
+    const result = anthropicMessagesInbound.parse({
+      model: 'claude-opus-4-6',
+      max_tokens: 512,
+      system: [
+        { type: 'text', text: 'system prompt', cache_control: { type: 'ephemeral' } },
+      ],
+      tools: [
+        {
+          name: 'lookup',
+          input_schema: { type: 'object' },
+          cache_control: { type: 'ephemeral' },
+        },
+      ],
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'hello', cache_control: { type: 'ephemeral' } },
+          ],
+        },
+      ],
+      thinking: { type: 'adaptive' },
+      output_config: { effort: 'high' },
+      tool_choice: { type: 'tool', name: 'lookup' },
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.value?.claudeOriginalBody).toEqual({
+      model: 'claude-opus-4-6',
+      max_tokens: 512,
+      system: [
+        { type: 'text', text: 'system prompt', cache_control: { type: 'ephemeral' } },
+      ],
+      tools: [
+        {
+          name: 'lookup',
+          input_schema: { type: 'object' },
+          cache_control: { type: 'ephemeral' },
+        },
+      ],
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'hello', cache_control: { type: 'ephemeral' } },
+          ],
+        },
+      ],
+      thinking: { type: 'adaptive' },
+      output_config: { effort: 'high' },
+      tool_choice: { type: 'tool', name: 'lookup' },
+    });
+  });
+
+  it('keeps native cache_control placement for already-native anthropic bodies', () => {
+    const nativeBody = {
+      model: 'claude-opus-4-6',
+      max_tokens: 512,
+      tools: [
+        {
+          name: 'lookup',
+          input_schema: { type: 'object' },
+          cache_control: { type: 'ephemeral' },
+        },
+      ],
+      messages: [
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'tool_1',
+              name: 'lookup',
+              input: { city: 'paris' },
+              cache_control: { type: 'ephemeral' },
+            },
+            {
+              type: 'text',
+              text: 'done',
+            },
+          ],
+        },
+      ],
+      tool_choice: { type: 'tool', name: 'lookup' },
+    };
+
+    const result = anthropicMessagesInbound.parse(nativeBody);
+
+    expect(result.error).toBeUndefined();
+    expect(result.value?.claudeOriginalBody).toEqual(nativeBody);
+  });
 });

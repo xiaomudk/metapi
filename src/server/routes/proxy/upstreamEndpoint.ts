@@ -277,14 +277,25 @@ export async function resolveUpstreamEndpointCandidates(
   modelName: string,
   downstreamFormat: EndpointPreference,
   requestedModelHint?: string,
+  requestCapabilities?: {
+    hasNonImageFileInput?: boolean;
+    wantsNativeResponsesReasoning?: boolean;
+  },
 ): Promise<UpstreamEndpoint[]> {
   const sitePlatform = normalizePlatformName(context.site.platform);
   const preferMessagesForClaudeModel = (
     isClaudeFamilyModel(modelName)
     || isClaudeFamilyModel(asTrimmedString(requestedModelHint))
   );
+  const hasNonImageFileInput = requestCapabilities?.hasNonImageFileInput === true;
+  const wantsNativeResponsesReasoning = requestCapabilities?.wantsNativeResponsesReasoning === true;
   if (sitePlatform === 'anyrouter') {
     // anyrouter deployments are effectively anthropic-protocol first.
+    if (hasNonImageFileInput) {
+      return downstreamFormat === 'responses'
+        ? ['responses', 'messages', 'chat']
+        : ['messages', 'responses', 'chat'];
+    }
     if (downstreamFormat === 'responses') {
       return ['responses', 'messages', 'chat'];
     }
@@ -296,6 +307,24 @@ export async function resolveUpstreamEndpointCandidates(
     context.site.platform,
     preferMessagesForClaudeModel,
   );
+  const preferredWithCapabilities = hasNonImageFileInput
+    ? (() => {
+      if (sitePlatform === 'claude') return ['messages'] as UpstreamEndpoint[];
+      if (sitePlatform === 'gemini') return ['responses', 'chat'] as UpstreamEndpoint[];
+      if (preferMessagesForClaudeModel) return ['messages', 'responses', 'chat'] as UpstreamEndpoint[];
+      return ['responses', 'messages', 'chat'] as UpstreamEndpoint[];
+    })()
+    : preferred;
+  const prioritizedPreferredEndpoints: UpstreamEndpoint[] = (
+    wantsNativeResponsesReasoning
+    && preferMessagesForClaudeModel
+    && preferredWithCapabilities.includes('responses')
+  )
+    ? [
+      'responses',
+      ...preferredWithCapabilities.filter((endpoint): endpoint is UpstreamEndpoint => endpoint !== 'responses'),
+    ]
+    : preferredWithCapabilities;
   const forceMessagesFirstForClaudeModel = (
     downstreamFormat === 'openai'
     && preferMessagesForClaudeModel
@@ -320,20 +349,20 @@ export async function resolveUpstreamEndpointCandidates(
     });
 
     if (!catalog || !Array.isArray(catalog.models) || catalog.models.length === 0) {
-      return preferred;
+      return prioritizedPreferredEndpoints;
     }
 
     const matched = catalog.models.find((item) =>
       asTrimmedString(item?.modelName).toLowerCase() === modelName.toLowerCase(),
     );
-    if (!matched) return preferred;
+    if (!matched) return prioritizedPreferredEndpoints;
 
     const shouldIgnoreCatalogOrderingForClaudeMessages = (
       preferMessagesForClaudeModel
       && (downstreamFormat !== 'responses' || sitePlatform !== 'openai')
     );
     if (shouldIgnoreCatalogOrderingForClaudeMessages) {
-      return preferred;
+      return prioritizedPreferredEndpoints;
     }
 
     const supportedRaw = Array.isArray(matched.supportedEndpointTypes) ? matched.supportedEndpointTypes : [];
@@ -353,7 +382,7 @@ export async function resolveUpstreamEndpointCandidates(
     if (forceMessagesFirstForClaudeModel && !hasConcreteEndpointHint) {
       // Generic labels like openai/anthropic are too coarse for Claude models;
       // keep messages-first order in this case.
-      return preferred;
+      return prioritizedPreferredEndpoints;
     }
 
     const supported = new Set<UpstreamEndpoint>();
@@ -364,19 +393,19 @@ export async function resolveUpstreamEndpointCandidates(
       }
     }
 
-    if (supported.size === 0) return preferred;
+    if (supported.size === 0) return prioritizedPreferredEndpoints;
 
-    const firstSupported = preferred.find((endpoint) => supported.has(endpoint));
-    if (!firstSupported) return preferred;
+    const firstSupported = prioritizedPreferredEndpoints.find((endpoint) => supported.has(endpoint));
+    if (!firstSupported) return prioritizedPreferredEndpoints;
 
     // Catalog metadata can be incomplete/inaccurate, so only use it to pick
     // the first attempt. Keep downstream-driven fallback order unchanged.
     return [
       firstSupported,
-      ...preferred.filter((endpoint) => endpoint !== firstSupported),
+      ...prioritizedPreferredEndpoints.filter((endpoint) => endpoint !== firstSupported),
     ];
   } catch {
-    return preferred;
+    return prioritizedPreferredEndpoints;
   }
 }
 
@@ -390,6 +419,7 @@ export function buildUpstreamEndpointRequest(input: {
   openaiBody: Record<string, unknown>;
   downstreamFormat: EndpointPreference;
   claudeOriginalBody?: Record<string, unknown>;
+  forceNormalizeClaudeBody?: boolean;
   responsesOriginalBody?: Record<string, unknown>;
   downstreamHeaders?: Record<string, unknown>;
 }): {
@@ -451,16 +481,33 @@ export function buildUpstreamEndpointRequest(input: {
       || passthroughHeaders['anthropic-version']
       || '2023-06-01'
     );
-    const body = (
-      input.downstreamFormat === 'claude' && input.claudeOriginalBody
-        ? {
-          ...input.claudeOriginalBody,
-          model: input.modelName,
-          stream: input.stream,
-        }
-        : convertOpenAiBodyToAnthropicMessagesBody(input.openaiBody, input.modelName, input.stream)
-    );
-    const sanitizedBody = sanitizeAnthropicMessagesBody(body);
+    const nativeClaudeBody = (
+      input.downstreamFormat === 'claude'
+      && input.claudeOriginalBody
+      && input.forceNormalizeClaudeBody !== true
+    )
+      ? {
+        ...input.claudeOriginalBody,
+        model: input.modelName,
+        stream: input.stream,
+      }
+      : null;
+    const normalizedClaudeBody = (
+      input.downstreamFormat === 'claude'
+      && input.claudeOriginalBody
+      && input.forceNormalizeClaudeBody === true
+    )
+      ? sanitizeAnthropicMessagesBody({
+        ...input.claudeOriginalBody,
+        model: input.modelName,
+        stream: input.stream,
+      })
+      : null;
+    const sanitizedBody = nativeClaudeBody
+      ?? normalizedClaudeBody
+      ?? sanitizeAnthropicMessagesBody(
+        convertOpenAiBodyToAnthropicMessagesBody(input.openaiBody, input.modelName, input.stream),
+      );
 
     const headers = ensureStreamAcceptHeader({
       ...commonHeaders,

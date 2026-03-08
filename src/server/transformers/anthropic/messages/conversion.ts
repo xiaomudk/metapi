@@ -1,3 +1,8 @@
+import { normalizeInputFileBlock, toAnthropicDocumentBlock } from '../../shared/inputFile.js';
+import {
+  decodeAnthropicReasoningSignature,
+} from '../../shared/reasoningTransport.js';
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
 }
@@ -256,6 +261,19 @@ function toAnthropicTextBlock(text: string): Record<string, unknown> | null {
   return normalized ? { type: 'text', text: normalized } : null;
 }
 
+function resolveAnthropicThinkingSignature(item: Record<string, unknown>): string | null | undefined {
+  const rawSignature = asTrimmedString(item.signature ?? item.reasoning_signature);
+  if (!rawSignature) return undefined;
+  const decodedTaggedSignature = decodeAnthropicReasoningSignature(rawSignature);
+  if (decodedTaggedSignature !== null) {
+    return decodedTaggedSignature;
+  }
+  if (item.reasoning_signature !== undefined || rawSignature.startsWith('metapi:')) {
+    return null;
+  }
+  return rawSignature;
+}
+
 function sanitizeAnthropicContentBlock(item: Record<string, unknown>): Record<string, unknown> | null {
   const type = asTrimmedString(item.type).toLowerCase();
   if (!type) {
@@ -276,9 +294,16 @@ function sanitizeAnthropicContentBlock(item: Record<string, unknown>): Record<st
     return toAnthropicImageBlock(item);
   }
 
+  if (type === 'file' || type === 'input_file') {
+    const fileBlock = normalizeInputFileBlock(item);
+    return fileBlock ? toAnthropicDocumentBlock(fileBlock) : null;
+  }
+
   if (type === 'thinking' || type === 'redacted_thinking' || type === 'reasoning') {
     const text = asTrimmedString(item.thinking ?? item.text ?? item.content ?? item.data);
     if (!text) return null;
+    const signature = type === 'redacted_thinking' ? undefined : resolveAnthropicThinkingSignature(item);
+    if (signature === null) return null;
     const next: Record<string, unknown> = { ...item };
     if (type === 'redacted_thinking') {
       next.type = 'redacted_thinking';
@@ -287,10 +312,16 @@ function sanitizeAnthropicContentBlock(item: Record<string, unknown>): Record<st
     } else {
       next.type = type === 'reasoning' ? 'thinking' : type;
       next.thinking = text;
+      if (signature) {
+        next.signature = signature;
+      } else {
+        delete next.signature;
+      }
     }
     delete next.cache_control;
     delete next.text;
     delete next.content;
+    delete next.reasoning_signature;
     return next;
   }
 
@@ -893,6 +924,7 @@ export function convertOpenAiBodyToAnthropicMessagesBody(
 
 export function validateAnthropicMessagesBody(
   body: Record<string, unknown>,
+  options: { autoOptimizeCacheControls?: boolean } = {},
 ): { sanitizedBody?: Record<string, unknown>; error?: { statusCode: number; payload: unknown } } {
   const thinkingResult = sanitizeAnthropicThinkingConfig(body.thinking);
   if (thinkingResult.error) {
@@ -928,5 +960,5 @@ export function validateAnthropicMessagesBody(
     };
   }
 
-  return { sanitizedBody: sanitizeAnthropicMessagesBody(body) };
+  return { sanitizedBody: sanitizeAnthropicMessagesBody(body, options) };
 }
