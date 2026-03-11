@@ -66,14 +66,17 @@
 
 1. 前往 [TiDB Cloud](https://tidbcloud.com) 注册账号
 2. 创建一个 **Serverless** 集群（免费）
-3. 在集群概览页点击 **Connect**，选择连接方式 **General**，获取连接参数
-4. 拼接为 Metapi 所需的 `DB_URL` 格式：
+3. 在集群概览页点击 **Connect**，在弹出的面板中：
+   - **Connection Type**: Public
+   - **Database**: ⚠️ **必须改为 `test`**（默认是 `sys`，这是系统库，不允许建表！）
+   - 点击 **Generate Password** 生成密码并妥善保存
+4. 使用面板中显示的参数拼接 `DB_URL`：
 
    ```
-   mysql://<user>:<password>@<host>:4000/<database>?ssl={"rejectUnauthorized":true}
+   mysql://<USERNAME>:<PASSWORD>@<HOST>:4000/test?ssl={"rejectUnauthorized":true}
    ```
 
-   > 将 `<user>`、`<password>`、`<host>`、`<database>` 替换为 TiDB 提供的实际值。
+   > ⚠️ 注意：`<HOST>`、`<USERNAME>`、`<PASSWORD>` 从 Connect 面板中获取，**数据库名必须用 `test` 而非默认的 `sys`**。
 
 > [!TIP]
 > 这里只是以TiDB作为示例，你也可以使用其他提供免费额度的云数据库方案（如 Neon、Supabase 等），只需将 `DB_TYPE` 设为对应的 `mysql` 或 `postgres`，并填入正确的连接串即可。什么？你不会其他的？把步骤复制给Gemini问他怎么改。

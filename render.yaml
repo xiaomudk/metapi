@@ -14,7 +14,7 @@ services:
       - key: TZ
         value: Asia/Shanghai
       - key: PORT
-        value: "4000"
+        generateValue: false
       - key: DATA_DIR
         value: /app/data
       - key: NODE_ENV
