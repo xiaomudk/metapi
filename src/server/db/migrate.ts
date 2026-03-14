@@ -197,9 +197,31 @@ function markMigrationRecordIfMissing(sqlite: Database.Database, record: Migrati
 }
 
 function normalizeSchemaErrorMessage(error: unknown): string {
-  if (typeof error === 'object' && error && 'message' in error) {
-    return String((error as { message?: unknown }).message || '');
+  if (!error || typeof error !== 'object') {
+    return String(error || '');
   }
+
+  const collected: string[] = [];
+  let cursor: unknown = error;
+  let depth = 0;
+
+  while (cursor && typeof cursor === 'object' && depth < 8) {
+    const current = cursor as { message?: unknown; cause?: unknown };
+    if (current.message !== undefined && current.message !== null) {
+      const text = String(current.message).trim();
+      if (text.length > 0) {
+        collected.push(text);
+      }
+    }
+
+    cursor = current.cause;
+    depth += 1;
+  }
+
+  if (collected.length > 0) {
+    return collected.join(' | ');
+  }
+
   return String(error || '');
 }
 

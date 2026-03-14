@@ -125,4 +125,65 @@ describe('sqlite migrate bootstrap', () => {
 
     sqlite.close();
   });
+
+  it('recovers when duplicate-column message appears only in error cause', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-recover-cause-'));
+    process.env.DATA_DIR = dataDir;
+    vi.resetModules();
+
+    const migrateModule = await import('./migrate.js');
+    const { __migrateTestUtils } = migrateModule;
+
+    const sqlite = new Database(':memory:');
+    sqlite.exec(`
+      CREATE TABLE account_tokens (
+        id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        token_group text
+      );
+    `);
+
+    const tempMigrationsDir = mkdtempSync(join(tmpdir(), 'metapi-migration-files-cause-'));
+    mkdirSync(join(tempMigrationsDir, 'meta'), { recursive: true });
+
+    writeFileSync(
+      join(tempMigrationsDir, 'meta', '_journal.json'),
+      JSON.stringify({
+        entries: [
+          {
+            tag: '0007_account_token_group',
+            when: 1772500000001,
+          },
+        ],
+      }),
+    );
+
+    writeFileSync(
+      join(tempMigrationsDir, '0007_account_token_group.sql'),
+      'ALTER TABLE `account_tokens` ADD `token_group` text;\n',
+    );
+
+    const drizzleLikeError = {
+      message: "DrizzleError: Failed to run the query 'ALTER TABLE `account_tokens` ADD `token_group` text;\n'",
+      cause: {
+        message: 'SqliteError: duplicate column name: token_group',
+      },
+    };
+
+    const recovered = __migrateTestUtils.tryRecoverDuplicateColumnMigrationError(
+      sqlite,
+      tempMigrationsDir,
+      drizzleLikeError,
+    );
+
+    expect(recovered).toBe(true);
+
+    const applied = sqlite
+      .prepare('SELECT hash, created_at FROM __drizzle_migrations')
+      .all() as Array<{ hash: string; created_at: number }>;
+
+    expect(applied).toHaveLength(1);
+    expect(Number(applied[0].created_at)).toBe(1772500000001);
+
+    sqlite.close();
+  });
 });
