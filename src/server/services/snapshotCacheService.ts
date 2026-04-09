@@ -102,11 +102,7 @@ export async function readSnapshotCache<T>(
         options.loader,
         options.ttlMs,
         staleMs,
-      )
-        .catch((error) => {
-          throw error;
-        })
-        .finally(() => {
+      ).finally(() => {
           const next = snapshotCache.get(cacheKey) as
             | SnapshotCacheEntry<T>
             | undefined;

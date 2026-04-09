@@ -51,14 +51,12 @@ const DASHBOARD_INSIGHTS_TTL_MS = 20_000;
 const SITE_AVAILABILITY_BUCKET_COUNT = 24;
 
 async function loadDashboardSummaryPayload(): Promise<DashboardSummaryPayload> {
-  const [accountRows] = await Promise.all([
-    db
-      .select()
-      .from(schema.accounts)
-      .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-      .where(eq(schema.sites.status, "active"))
-      .all(),
-  ]);
+  const accountRows = await db
+    .select()
+    .from(schema.accounts)
+    .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+    .where(eq(schema.sites.status, "active"))
+    .all();
   const accounts = accountRows.map((row) => row.accounts);
   const totalBalance = accounts.reduce(
     (sum, account) => sum + (account.balance || 0),
