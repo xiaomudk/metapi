@@ -1,4 +1,4 @@
-import { getAllBrandNames as getSharedBrandNames, getBrand } from '../shared/modelBrand.js';
+import { getAllBrandNames as getSharedBrandNames, getMatchingBrandNames } from '../shared/modelBrand.js';
 
 export type BlockedBrandRule = string;
 
@@ -23,6 +23,6 @@ export function getBlockedBrandRules(blockedBrands: string[]): BlockedBrandRule[
 
 export function isModelBlockedByBrand(modelName: string, rules: BlockedBrandRule[]): boolean {
   if (!modelName || rules.length === 0) return false;
-  const brand = getBrand(modelName);
-  return !!brand && rules.includes(brand.name);
+  const matchedBrands = new Set(getMatchingBrandNames(modelName));
+  return rules.some((rule) => matchedBrands.has(rule));
 }
