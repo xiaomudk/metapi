@@ -72,6 +72,64 @@ export function toLocalDayKeyFromStoredUtc(raw: StoredUtcDateTimeInput): string 
   return formatLocalDate(parsed);
 }
 
+export function getLocalHourAnchor(now = new Date()): Date {
+  return new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+    now.getHours(),
+    0,
+    0,
+    0,
+  );
+}
+
+export function toLocalHourBucketStartUtc(raw: StoredUtcDateTimeInput): string | null {
+  const parsed = parseStoredUtcDateTime(raw);
+  if (!parsed) return null;
+  return formatUtcSqlDateTime(getLocalHourAnchor(parsed));
+}
+
+export function toLocalHourStartUtcFromStoredUtc(raw: StoredUtcDateTimeInput): string | null {
+  return toLocalHourBucketStartUtc(raw);
+}
+
+export function toLocalDayStartUtcFromStoredUtc(raw: StoredUtcDateTimeInput): string | null {
+  const parsed = parseStoredUtcDateTime(raw);
+  if (!parsed) return null;
+  return formatUtcSqlDateTime(
+    new Date(
+      parsed.getFullYear(),
+      parsed.getMonth(),
+      parsed.getDate(),
+      0,
+      0,
+      0,
+      0,
+    ),
+  );
+}
+
+export function getLocalDayKeyRangeUtc(dayKey: string): {
+  startUtc: string;
+  endUtc: string;
+} | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec((dayKey || '').trim());
+  if (!match) return null;
+  const year = Number(match[1]);
+  const monthIndex = Number(match[2]) - 1;
+  const day = Number(match[3]);
+  if (![year, monthIndex, day].every(Number.isInteger)) return null;
+
+  const startLocal = new Date(year, monthIndex, day, 0, 0, 0, 0);
+  if (Number.isNaN(startLocal.getTime())) return null;
+  const endLocal = new Date(startLocal.getTime() + DAY_MS);
+  return {
+    startUtc: formatUtcSqlDateTime(startLocal),
+    endUtc: formatUtcSqlDateTime(endLocal),
+  };
+}
+
 export function getLocalDayRangeUtc(now = new Date()): {
   localDay: string;
   startUtc: string;
@@ -93,16 +151,11 @@ export function getLocalRangeStartUtc(days: number, now = new Date()): string {
   return formatUtcSqlDateTime(start);
 }
 
-export function getLocalHourAnchor(now = new Date()): Date {
-  return new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-    now.getHours(),
-    0,
-    0,
-    0,
-  );
+export function getLocalRangeStartDayKey(days: number, now = new Date()): string {
+  const normalizedDays = Math.max(1, Math.floor(days || 1));
+  const localStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+  const start = new Date(localStart.getTime() - (normalizedDays - 1) * DAY_MS);
+  return formatLocalDate(start);
 }
 
 export function getLocalHourRangeStartUtc(hours: number, now = new Date()): string {
@@ -110,4 +163,16 @@ export function getLocalHourRangeStartUtc(hours: number, now = new Date()): stri
   const localAnchor = getLocalHourAnchor(now);
   const start = new Date(localAnchor.getTime() - (normalizedHours - 1) * HOUR_MS);
   return formatUtcSqlDateTime(start);
+}
+
+export function getUtcHourRangeFromStoredStart(hourStartUtc: string): {
+  startUtc: string;
+  endUtc: string;
+} | null {
+  const parsed = parseStoredUtcDateTime(hourStartUtc);
+  if (!parsed) return null;
+  return {
+    startUtc: formatUtcSqlDateTime(parsed),
+    endUtc: formatUtcSqlDateTime(new Date(parsed.getTime() + HOUR_MS)),
+  };
 }

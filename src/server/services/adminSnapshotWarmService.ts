@@ -5,6 +5,7 @@ import {
   getDashboardSummarySnapshot,
 } from "./dashboardSnapshotService.js";
 import { getSiteStatsSnapshot } from "./siteStatsSnapshotService.js";
+import { runUsageAggregationProjectionPass } from "./usageAggregationService.js";
 
 const ADMIN_SNAPSHOT_WARM_INTERVAL_MS = 20_000;
 const ADMIN_SNAPSHOT_PRUNE_EVERY_PASSES = 6;
@@ -38,6 +39,7 @@ const snapshotWarmTargets: SnapshotWarmTarget[] = [
 ];
 
 async function runAdminSnapshotWarmPass() {
+  await runUsageAggregationProjectionPass();
   const settled = await Promise.allSettled(
     snapshotWarmTargets.map(async (target) => {
       await target.refresh();

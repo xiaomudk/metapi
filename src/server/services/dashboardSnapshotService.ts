@@ -1,27 +1,27 @@
 import { and, eq, gte, lt, sql } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
-import { buildModelAnalysis } from "./modelAnalysisService.js";
+import { buildModelAnalysisFromDailyUsage } from "./modelAnalysisService.js";
 import { parseCheckinRewardAmount } from "./checkinRewardParser.js";
 import {
   formatUtcSqlDateTime,
   getLocalDayRangeUtc,
   getLocalHourAnchor,
   getLocalHourRangeStartUtc,
-  getLocalRangeStartUtc,
+  getLocalRangeStartDayKey,
 } from "./localTimeService.js";
 import {
   readSnapshotCache,
   type SnapshotEnvelope,
 } from "./snapshotCacheService.js";
 import {
-  buildProxyLogModelAnalysisSelectFields,
-  buildSiteAvailabilitySummaries,
+  buildSiteAvailabilitySummariesFromHourlyAggregates,
   proxyCostSqlExpression,
   type SiteAvailabilitySiteRow,
   toRoundedMicroNumber,
 } from "./statsShared.js";
 import { estimateRewardWithTodayIncomeFallback } from "./todayIncomeRewardService.js";
 import { createAdminSnapshotPersistence } from "./adminSnapshotStore.js";
+import { runUsageAggregationProjectionPass } from "./usageAggregationService.js";
 
 export type DashboardSummaryPayload = {
   totalBalance: number;
@@ -45,8 +45,10 @@ export type DashboardSummaryPayload = {
 };
 
 export type DashboardInsightsPayload = {
-  siteAvailability: ReturnType<typeof buildSiteAvailabilitySummaries>;
-  modelAnalysis: ReturnType<typeof buildModelAnalysis>;
+  siteAvailability: ReturnType<
+    typeof buildSiteAvailabilitySummariesFromHourlyAggregates
+  >;
+  modelAnalysis: ReturnType<typeof buildModelAnalysisFromDailyUsage>;
 };
 
 const DASHBOARD_SUMMARY_TTL_MS = 12_000;
@@ -64,6 +66,8 @@ const dashboardInsightsPersistence =
   });
 
 async function loadDashboardSummaryPayload(): Promise<DashboardSummaryPayload> {
+  await runUsageAggregationProjectionPass();
+
   const accountRows = await db
     .select()
     .from(schema.accounts)
@@ -113,32 +117,24 @@ async function loadDashboardSummaryPayload(): Promise<DashboardSummaryPayload> {
       .all(),
     db
       .select({
-        totalUsed: sql<number>`coalesce(sum(${proxyCostSqlExpression()}), 0)`,
+        totalUsed: sql<number>`coalesce(sum(coalesce(${schema.siteDayUsage.totalSiteSpend}, 0)), 0)`,
       })
-      .from(schema.proxyLogs)
-      .innerJoin(
-        schema.accounts,
-        eq(schema.proxyLogs.accountId, schema.accounts.id),
-      )
-      .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+      .from(schema.siteDayUsage)
+      .innerJoin(schema.sites, eq(schema.siteDayUsage.siteId, schema.sites.id))
       .where(eq(schema.sites.status, "active"))
       .get(),
     db
       .select({
-        total: sql<number>`count(*)`,
-        success: sql<number>`coalesce(sum(case when ${schema.proxyLogs.status} = 'success' then 1 else 0 end), 0)`,
-        failed: sql<number>`coalesce(sum(case when ${schema.proxyLogs.status} = 'failed' then 1 else 0 end), 0)`,
-        totalTokens: sql<number>`coalesce(sum(coalesce(${schema.proxyLogs.totalTokens}, 0)), 0)`,
+        total: sql<number>`coalesce(sum(coalesce(${schema.siteHourUsage.totalCalls}, 0)), 0)`,
+        success: sql<number>`coalesce(sum(coalesce(${schema.siteHourUsage.successCalls}, 0)), 0)`,
+        failed: sql<number>`coalesce(sum(coalesce(${schema.siteHourUsage.failedCalls}, 0)), 0)`,
+        totalTokens: sql<number>`coalesce(sum(coalesce(${schema.siteHourUsage.totalTokens}, 0)), 0)`,
       })
-      .from(schema.proxyLogs)
-      .innerJoin(
-        schema.accounts,
-        eq(schema.proxyLogs.accountId, schema.accounts.id),
-      )
-      .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+      .from(schema.siteHourUsage)
+      .innerJoin(schema.sites, eq(schema.siteHourUsage.siteId, schema.sites.id))
       .where(
         and(
-          gte(schema.proxyLogs.createdAt, last24hDate),
+          gte(schema.siteHourUsage.bucketStartUtc, last24hDate),
           eq(schema.sites.status, "active"),
         ),
       )
@@ -163,18 +159,13 @@ async function loadDashboardSummaryPayload(): Promise<DashboardSummaryPayload> {
       .get(),
     db
       .select({
-        todaySpend: sql<number>`coalesce(sum(coalesce(${schema.proxyLogs.estimatedCost}, 0)), 0)`,
+        todaySpend: sql<number>`coalesce(sum(coalesce(${schema.siteDayUsage.totalSiteSpend}, 0)), 0)`,
       })
-      .from(schema.proxyLogs)
-      .innerJoin(
-        schema.accounts,
-        eq(schema.proxyLogs.accountId, schema.accounts.id),
-      )
-      .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+      .from(schema.siteDayUsage)
+      .innerJoin(schema.sites, eq(schema.siteDayUsage.siteId, schema.sites.id))
       .where(
         and(
-          gte(schema.proxyLogs.createdAt, todayStartUtc),
-          lt(schema.proxyLogs.createdAt, todayEndUtc),
+          eq(schema.siteDayUsage.localDay, today),
           eq(schema.sites.status, "active"),
         ),
       )
@@ -254,32 +245,15 @@ async function loadDashboardSummaryPayload(): Promise<DashboardSummaryPayload> {
 
 async function loadDashboardInsightsPayload(): Promise<DashboardInsightsPayload> {
   const siteAvailabilityNow = getLocalHourAnchor();
-  const last7dDate = getLocalRangeStartUtc(7);
-  const recentProxyLogFields = buildProxyLogModelAnalysisSelectFields();
   const siteAvailabilitySinceUtc = getLocalHourRangeStartUtc(
     SITE_AVAILABILITY_BUCKET_COUNT,
     siteAvailabilityNow,
   );
+  const modelAnalysisSinceDay = getLocalRangeStartDayKey(7);
+  await runUsageAggregationProjectionPass();
 
-  const [recentProxyLogs, activeSites, siteAvailabilityLogs] =
+  const [activeSites, siteAvailabilityRows, modelDayRows] =
     await Promise.all([
-      db
-        .select({
-          proxy_logs: recentProxyLogFields,
-        })
-        .from(schema.proxyLogs)
-        .leftJoin(
-          schema.accounts,
-          eq(schema.proxyLogs.accountId, schema.accounts.id),
-        )
-        .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-        .where(
-          and(
-            gte(schema.proxyLogs.createdAt, last7dDate),
-            eq(schema.sites.status, "active"),
-          ),
-        )
-        .all(),
       db
         .select({
           id: schema.sites.id,
@@ -293,24 +267,14 @@ async function loadDashboardInsightsPayload(): Promise<DashboardInsightsPayload>
         .where(eq(schema.sites.status, "active"))
         .all(),
       db
-        .select({
-          siteId: schema.sites.id,
-          createdAt: schema.proxyLogs.createdAt,
-          status: schema.proxyLogs.status,
-          latencyMs: schema.proxyLogs.latencyMs,
-        })
-        .from(schema.proxyLogs)
-        .innerJoin(
-          schema.accounts,
-          eq(schema.proxyLogs.accountId, schema.accounts.id),
-        )
-        .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-        .where(
-          and(
-            gte(schema.proxyLogs.createdAt, siteAvailabilitySinceUtc),
-            eq(schema.sites.status, "active"),
-          ),
-        )
+        .select()
+        .from(schema.siteHourUsage)
+        .where(gte(schema.siteHourUsage.bucketStartUtc, siteAvailabilitySinceUtc))
+        .all(),
+      db
+        .select()
+        .from(schema.modelDayUsage)
+        .where(gte(schema.modelDayUsage.localDay, modelAnalysisSinceDay))
         .all(),
     ]);
 
@@ -325,15 +289,36 @@ async function loadDashboardInsightsPayload(): Promise<DashboardInsightsPayload>
       return String(left.name || "").localeCompare(String(right.name || ""));
     },
   );
+  const activeSiteIdSet = new Set(sortedSites.map((site) => site.id));
 
   return {
-    siteAvailability: buildSiteAvailabilitySummaries(
+    siteAvailability: buildSiteAvailabilitySummariesFromHourlyAggregates(
       sortedSites,
-      siteAvailabilityLogs,
+      siteAvailabilityRows
+        .filter((row) => activeSiteIdSet.has(row.siteId))
+        .map((row) => ({
+          siteId: row.siteId,
+          hourStartUtc: row.bucketStartUtc,
+          totalRequests: row.totalCalls,
+          successCount: row.successCalls,
+          failedCount: row.failedCalls,
+          totalLatencyMs: row.totalLatencyMs,
+          latencyCount: row.latencyCount,
+        })),
       siteAvailabilityNow,
     ),
-    modelAnalysis: buildModelAnalysis(
-      recentProxyLogs.map((row) => row.proxy_logs),
+    modelAnalysis: buildModelAnalysisFromDailyUsage(
+      modelDayRows
+        .filter((row) => activeSiteIdSet.has(row.siteId))
+        .map((row) => ({
+          localDay: row.localDay,
+          model: row.model,
+          totalCalls: row.totalCalls,
+          successCalls: row.successCalls,
+          totalTokens: row.totalTokens,
+          totalSpend: row.totalSpend,
+          totalLatencyMs: row.totalLatencyMs,
+        })),
       { days: 7 },
     ),
   };

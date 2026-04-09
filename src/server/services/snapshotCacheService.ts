@@ -103,7 +103,14 @@ async function loadAndStoreSnapshot<T>(
     staleUntilMs: nowMs + Math.max(Math.max(1, ttlMs), staleMs),
   });
   if (persistence) {
-    await persistence.write(persistedRecord);
+    try {
+      await persistence.write(persistedRecord);
+    } catch (error) {
+      console.warn(
+        `[snapshotCache] persistence write failed for ${cacheKey}:`,
+        error,
+      );
+    }
   }
   return envelope;
 }
@@ -142,12 +149,24 @@ export async function readSnapshotCache<T>(
   let cached = getSnapshotCacheEntry<T>(cacheKey);
 
   if (!cached && !options.forceRefresh && options.persistence) {
-    const persisted = await options.persistence.read();
-    if (persisted) {
-      cached = buildCacheEntryFromPersistedSnapshot(persisted);
-      setSnapshotCacheEntry(cacheKey, cached);
+    try {
+      const persisted = await options.persistence.read();
+      const shared = getSnapshotCacheEntry<T>(cacheKey);
+      if (shared) {
+        cached = shared;
+      } else if (persisted) {
+        cached = buildCacheEntryFromPersistedSnapshot(persisted);
+        setSnapshotCacheEntry(cacheKey, cached);
+      }
+    } catch (error) {
+      console.warn(
+        `[snapshotCache] persistence read failed for ${cacheKey}; falling back to loader:`,
+        error,
+      );
     }
   }
+
+  cached = getSnapshotCacheEntry<T>(cacheKey) ?? cached;
 
   if (
     !options.forceRefresh &&
@@ -190,6 +209,18 @@ export async function readSnapshotCache<T>(
       payload: cached.payload,
       generatedAt: new Date(cached.generatedAtMs).toISOString(),
       cacheStatus: "stale",
+    };
+  }
+
+  const shared = getSnapshotCacheEntry<T>(cacheKey);
+  if (shared?.inFlight) {
+    const result = await shared.inFlight;
+    return {
+      ...result,
+      cacheStatus:
+        options.forceRefresh || shared.payload !== undefined
+          ? "refresh"
+          : result.cacheStatus,
     };
   }
 

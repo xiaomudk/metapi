@@ -6,7 +6,6 @@ import { refreshModelsForAccount } from "../../services/modelService.js";
 import * as routeRefreshWorkflow from "../../services/routeRefreshWorkflow.js";
 import { buildModelAnalysis } from "../../services/modelAnalysisService.js";
 import {
-  fallbackTokenCost,
   fetchModelPricingCatalog,
 } from "../../services/modelPricingService.js";
 import {
@@ -39,6 +38,7 @@ import {
   formatLocalDateTime,
   formatUtcSqlDateTime,
   getLocalDayRangeUtc,
+  getLocalRangeStartDayKey,
   getLocalRangeStartUtc,
   parseStoredUtcDateTime,
   type StoredUtcDateTimeInput,
@@ -50,6 +50,9 @@ import {
   getDashboardSummarySnapshot,
 } from "../../services/dashboardSnapshotService.js";
 import { getSiteStatsSnapshot } from "../../services/siteStatsSnapshotService.js";
+import {
+  runUsageAggregationProjectionPass,
+} from "../../services/usageAggregationService.js";
 
 function parseBooleanFlag(raw?: string): boolean {
   if (!raw) return false;
@@ -1982,45 +1985,24 @@ export async function statsRoutes(app: FastifyInstance) {
         ? parseInt(request.query.siteId, 10)
         : null;
       const days = Math.max(1, parseInt(request.query.days || "7", 10));
-      const sinceDate = getLocalRangeStartUtc(days);
-
-      // Get account IDs belonging to the site (if filtered)
-      let accountIds: Set<number> | null = null;
-      if (siteId != null && !Number.isNaN(siteId)) {
-        const siteAccounts = await db
-          .select()
-          .from(schema.accounts)
-          .where(eq(schema.accounts.siteId, siteId))
-          .all();
-        accountIds = new Set(siteAccounts.map((a) => a.id));
-      }
-
-      const rows = await db
-        .select({
-          proxy_logs: {
-            accountId: schema.proxyLogs.accountId,
-            modelActual: schema.proxyLogs.modelActual,
-            modelRequested: schema.proxyLogs.modelRequested,
-            totalTokens: schema.proxyLogs.totalTokens,
-            estimatedCost: schema.proxyLogs.estimatedCost,
-          },
-          sites: {
-            platform: schema.sites.platform,
-          },
-        })
-        .from(schema.proxyLogs)
-        .leftJoin(
-          schema.accounts,
-          eq(schema.proxyLogs.accountId, schema.accounts.id),
-        )
-        .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-        .where(
-          and(
-            gte(schema.proxyLogs.createdAt, sinceDate),
-            eq(schema.sites.status, "active"),
-          ),
-        )
-        .all();
+      await runUsageAggregationProjectionPass();
+      const sinceDay = getLocalRangeStartDayKey(days);
+      const rows = siteId != null && Number.isFinite(siteId)
+        ? await db
+            .select()
+            .from(schema.modelDayUsage)
+            .where(
+              and(
+                gte(schema.modelDayUsage.localDay, sinceDay),
+                eq(schema.modelDayUsage.siteId, siteId),
+              ),
+            )
+            .all()
+        : await db
+            .select()
+            .from(schema.modelDayUsage)
+            .where(gte(schema.modelDayUsage.localDay, sinceDay))
+            .all();
 
       const modelMap: Record<
         string,
@@ -2028,29 +2010,13 @@ export async function statsRoutes(app: FastifyInstance) {
       > = {};
 
       for (const row of rows) {
-        const log = row.proxy_logs;
-        // Filter by site if siteId is specified
-        if (
-          accountIds != null &&
-          (log.accountId == null || !accountIds.has(log.accountId))
-        )
-          continue;
-
-        const model = log.modelActual || log.modelRequested || "unknown";
-        const platform = row.sites?.platform || "new-api";
+        const model = row.model || "unknown";
 
         if (!modelMap[model])
           modelMap[model] = { calls: 0, spend: 0, tokens: 0 };
-        modelMap[model].calls++;
-        modelMap[model].tokens += log.totalTokens || 0;
-
-        const explicitCost =
-          typeof log.estimatedCost === "number" ? log.estimatedCost : 0;
-        const cost =
-          explicitCost > 0
-            ? explicitCost
-            : fallbackTokenCost(log.totalTokens || 0, platform);
-        modelMap[model].spend += cost;
+        modelMap[model].calls += Number(row.totalCalls || 0);
+        modelMap[model].tokens += Number(row.totalTokens || 0);
+        modelMap[model].spend += Number(row.totalSpend || 0);
       }
 
       const models = Object.entries(modelMap)

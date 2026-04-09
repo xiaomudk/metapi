@@ -1,20 +1,17 @@
-import { and, eq, gte, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
-import { fallbackTokenCost } from "./modelPricingService.js";
-import {
-  getLocalRangeStartUtc,
-  toLocalDayKeyFromStoredUtc,
-} from "./localTimeService.js";
+import { getLocalRangeStartDayKey } from "./localTimeService.js";
 import {
   readSnapshotCache,
   type SnapshotEnvelope,
 } from "./snapshotCacheService.js";
 import {
-  buildProxyLogSiteTrendSelectFields,
-  proxyCostSqlExpression,
   toRoundedMicroNumber,
 } from "./statsShared.js";
 import { createAdminSnapshotPersistence } from "./adminSnapshotStore.js";
+import {
+  runUsageAggregationProjectionPass,
+} from "./usageAggregationService.js";
 
 export type SiteStatsSnapshotPayload = {
   distribution: Array<{
@@ -37,45 +34,23 @@ const SITE_STATS_TTL_MS = 15_000;
 async function loadSiteStatsSnapshotPayload(
   days: number,
 ): Promise<SiteStatsSnapshotPayload> {
-  const sinceDate = getLocalRangeStartUtc(days);
-  const proxyLogSiteTrendFields = buildProxyLogSiteTrendSelectFields();
+  const sinceDay = getLocalRangeStartDayKey(days);
+  await runUsageAggregationProjectionPass();
 
   const [spendRows, trendRows, sites, accountDistributionRows] =
     await Promise.all([
     db
       .select({
-        siteId: schema.sites.id,
-        totalSpend: sql<number>`coalesce(sum(${proxyCostSqlExpression()}), 0)`,
+        siteId: schema.siteDayUsage.siteId,
+        totalSpend: sql<number>`coalesce(sum(${schema.siteDayUsage.totalSiteSpend}), 0)`,
       })
-      .from(schema.proxyLogs)
-      .leftJoin(
-        schema.accounts,
-        eq(schema.proxyLogs.accountId, schema.accounts.id),
-      )
-      .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-      .where(eq(schema.sites.status, "active"))
-      .groupBy(schema.sites.id)
+      .from(schema.siteDayUsage)
+      .groupBy(schema.siteDayUsage.siteId)
       .all(),
     db
-      .select({
-        proxy_logs: proxyLogSiteTrendFields,
-        sites: {
-          name: schema.sites.name,
-          platform: schema.sites.platform,
-        },
-      })
-      .from(schema.proxyLogs)
-      .leftJoin(
-        schema.accounts,
-        eq(schema.proxyLogs.accountId, schema.accounts.id),
-      )
-      .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-      .where(
-        and(
-          gte(schema.proxyLogs.createdAt, sinceDate),
-          eq(schema.sites.status, "active"),
-        ),
-      )
+      .select()
+      .from(schema.siteDayUsage)
+      .where(sql`${schema.siteDayUsage.localDay} >= ${sinceDay}`)
       .all(),
     db
       .select()
@@ -116,25 +91,21 @@ async function loadSiteStatsSnapshotPayload(
     string,
     Record<string, { spend: number; calls: number }>
   > = {};
+  const activeSiteById = new Map<number, (typeof schema.sites.$inferSelect)>(
+    sites.map((site) => [site.id, site]),
+  );
   for (const row of trendRows) {
-    const log = row.proxy_logs;
-    const siteName = row.sites?.name || "unknown";
-    const platform = row.sites?.platform || "new-api";
-    const date = toLocalDayKeyFromStoredUtc(log.createdAt);
-    if (!date) continue;
+    const site = activeSiteById.get(row.siteId);
+    if (!site) continue;
+    const siteName = site.name || "unknown";
+    const date = row.localDay;
 
     if (!dayMap[date]) dayMap[date] = {};
     if (!dayMap[date][siteName])
       dayMap[date][siteName] = { spend: 0, calls: 0 };
 
-    const explicitCost =
-      typeof log.estimatedCost === "number" ? log.estimatedCost : 0;
-    const cost =
-      explicitCost > 0
-        ? explicitCost
-        : fallbackTokenCost(log.totalTokens || 0, platform);
-    dayMap[date][siteName].spend += cost;
-    dayMap[date][siteName].calls += 1;
+    dayMap[date][siteName].spend += Number(row.totalSiteSpend || 0);
+    dayMap[date][siteName].calls += Number(row.totalCalls || 0);
   }
 
   const trend = Object.entries(dayMap)

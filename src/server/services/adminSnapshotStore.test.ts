@@ -94,6 +94,6 @@ describe("adminSnapshotStore", () => {
 
     const rows = await db.select().from(schema.adminSnapshots).all();
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.snapshotKey).toBe("fresh");
+    expect(rows[0]?.snapshotKey).toBe(JSON.stringify("fresh"));
   });
 });

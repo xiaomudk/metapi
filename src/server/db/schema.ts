@@ -390,6 +390,86 @@ export const adminSnapshots = sqliteTable('admin_snapshots', {
   staleUntilIdx: index('admin_snapshots_stale_until_idx').on(table.staleUntil),
 }));
 
+export const analyticsProjectionCheckpoints = sqliteTable('analytics_projection_checkpoints', {
+  projectorKey: text('projector_key').primaryKey(),
+  timeZone: text('time_zone').notNull().default('Local'),
+  lastProxyLogId: integer('last_proxy_log_id').notNull().default(0),
+  watermarkCreatedAt: text('watermark_created_at'),
+  recomputeFromId: integer('recompute_from_id'),
+  recomputeRequestedAt: text('recompute_requested_at'),
+  recomputeReason: text('recompute_reason'),
+  recomputeStartedAt: text('recompute_started_at'),
+  recomputeCompletedAt: text('recompute_completed_at'),
+  lastProjectedAt: text('last_projected_at'),
+  lastSuccessfulAt: text('last_successful_at'),
+  lastError: text('last_error'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  recomputeFromIdIdx: index('analytics_projection_checkpoints_recompute_from_id_idx').on(table.recomputeFromId),
+}));
+
+export const siteDayUsage = sqliteTable('site_day_usage', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  localDay: text('local_day').notNull(),
+  siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+  totalCalls: integer('total_calls').notNull().default(0),
+  successCalls: integer('success_calls').notNull().default(0),
+  failedCalls: integer('failed_calls').notNull().default(0),
+  totalTokens: integer('total_tokens').notNull().default(0),
+  totalSummarySpend: real('total_summary_spend').notNull().default(0),
+  totalSiteSpend: real('total_site_spend').notNull().default(0),
+  totalLatencyMs: integer('total_latency_ms').notNull().default(0),
+  latencyCount: integer('latency_count').notNull().default(0),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  daySiteUnique: uniqueIndex('site_day_usage_day_site_unique').on(table.localDay, table.siteId),
+  dayIdx: index('site_day_usage_day_idx').on(table.localDay),
+  siteIdx: index('site_day_usage_site_id_idx').on(table.siteId),
+}));
+
+export const siteHourUsage = sqliteTable('site_hour_usage', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  bucketStartUtc: text('bucket_start_utc').notNull(),
+  siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+  totalCalls: integer('total_calls').notNull().default(0),
+  successCalls: integer('success_calls').notNull().default(0),
+  failedCalls: integer('failed_calls').notNull().default(0),
+  totalTokens: integer('total_tokens').notNull().default(0),
+  totalSummarySpend: real('total_summary_spend').notNull().default(0),
+  totalSiteSpend: real('total_site_spend').notNull().default(0),
+  totalLatencyMs: integer('total_latency_ms').notNull().default(0),
+  latencyCount: integer('latency_count').notNull().default(0),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  hourSiteUnique: uniqueIndex('site_hour_usage_hour_site_unique').on(table.bucketStartUtc, table.siteId),
+  hourIdx: index('site_hour_usage_hour_idx').on(table.bucketStartUtc),
+  siteIdx: index('site_hour_usage_site_id_idx').on(table.siteId),
+}));
+
+export const modelDayUsage = sqliteTable('model_day_usage', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  localDay: text('local_day').notNull(),
+  siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+  model: text('model').notNull(),
+  totalCalls: integer('total_calls').notNull().default(0),
+  successCalls: integer('success_calls').notNull().default(0),
+  failedCalls: integer('failed_calls').notNull().default(0),
+  totalTokens: integer('total_tokens').notNull().default(0),
+  totalSpend: real('total_spend').notNull().default(0),
+  totalLatencyMs: integer('total_latency_ms').notNull().default(0),
+  latencyCount: integer('latency_count').notNull().default(0),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  daySiteModelUnique: uniqueIndex('model_day_usage_day_site_model_unique').on(table.localDay, table.siteId, table.model),
+  dayIdx: index('model_day_usage_day_idx').on(table.localDay),
+  siteIdx: index('model_day_usage_site_id_idx').on(table.siteId),
+  modelIdx: index('model_day_usage_model_idx').on(table.model),
+}));
+
 export const downstreamApiKeys = sqliteTable('downstream_api_keys', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),

@@ -63,6 +63,16 @@ export type SiteAvailabilityLogRow = {
   latencyMs: number | null;
 };
 
+export type SiteAvailabilityHourAggregateRow = {
+  siteId: number | null;
+  hourStartUtc: StoredUtcDateTimeInput;
+  totalRequests: number | null;
+  successCount: number | null;
+  failedCount: number | null;
+  totalLatencyMs: number | null;
+  latencyCount: number | null;
+};
+
 type SiteAvailabilityBucketAccumulator = {
   startUtc: string;
   label: string;
@@ -78,35 +88,25 @@ function roundPercent(value: number | null): number | null {
   return Math.round(value * 10) / 10;
 }
 
-export function buildSiteAvailabilitySummaries(
+function createSiteAvailabilityBucketTemplate(startMs: number) {
+  return Array.from({ length: SITE_AVAILABILITY_BUCKET_COUNT }, (_, index) => {
+    const bucketStart = new Date(startMs + index * SITE_AVAILABILITY_BUCKET_MS);
+    return {
+      startUtc: bucketStart.toISOString(),
+      label: formatLocalDateTime(bucketStart),
+      totalRequests: 0,
+      successCount: 0,
+      failedCount: 0,
+      latencyTotalMs: 0,
+      latencyCount: 0,
+    } satisfies SiteAvailabilityBucketAccumulator;
+  });
+}
+
+function createSiteAvailabilityAccumulatorMap(
   sites: SiteAvailabilitySiteRow[],
-  logs: SiteAvailabilityLogRow[],
-  now = new Date(),
+  startMs: number,
 ) {
-  const endLocal = getLocalHourAnchor(now);
-  const startLocal = new Date(
-    endLocal.getTime() -
-      (SITE_AVAILABILITY_BUCKET_COUNT - 1) * SITE_AVAILABILITY_BUCKET_MS,
-  );
-  const startMs = startLocal.getTime();
-  const rangeMs = SITE_AVAILABILITY_BUCKET_COUNT * SITE_AVAILABILITY_BUCKET_MS;
-
-  const createBucketTemplate = (): SiteAvailabilityBucketAccumulator[] =>
-    Array.from({ length: SITE_AVAILABILITY_BUCKET_COUNT }, (_, index) => {
-      const bucketStart = new Date(
-        startMs + index * SITE_AVAILABILITY_BUCKET_MS,
-      );
-      return {
-        startUtc: bucketStart.toISOString(),
-        label: formatLocalDateTime(bucketStart),
-        totalRequests: 0,
-        successCount: 0,
-        failedCount: 0,
-        latencyTotalMs: 0,
-        latencyCount: 0,
-      };
-    });
-
   const siteMap = new Map<
     number,
     {
@@ -128,9 +128,67 @@ export function buildSiteAvailabilitySummaries(
       failedCount: 0,
       latencyTotalMs: 0,
       latencyCount: 0,
-      buckets: createBucketTemplate(),
+      buckets: createSiteAvailabilityBucketTemplate(startMs),
     });
   }
+
+  return siteMap;
+}
+
+function finalizeSiteAvailabilitySummaries(
+  sites: SiteAvailabilitySiteRow[],
+  siteMap: ReturnType<typeof createSiteAvailabilityAccumulatorMap>,
+) {
+  return sites.map((site) => {
+    const aggregate = siteMap.get(site.id)!;
+    return {
+      siteId: site.id,
+      siteName: site.name,
+      siteUrl: site.url,
+      platform: site.platform,
+      totalRequests: aggregate.totalRequests,
+      successCount: aggregate.successCount,
+      failedCount: aggregate.failedCount,
+      availabilityPercent:
+        aggregate.totalRequests > 0
+          ? roundPercent((aggregate.successCount / aggregate.totalRequests) * 100)
+          : null,
+      averageLatencyMs:
+        aggregate.latencyCount > 0
+          ? Math.round(aggregate.latencyTotalMs / aggregate.latencyCount)
+          : null,
+      buckets: aggregate.buckets.map((bucket) => ({
+        startUtc: bucket.startUtc,
+        label: bucket.label,
+        totalRequests: bucket.totalRequests,
+        successCount: bucket.successCount,
+        failedCount: bucket.failedCount,
+        availabilityPercent:
+          bucket.totalRequests > 0
+            ? roundPercent((bucket.successCount / bucket.totalRequests) * 100)
+            : null,
+        averageLatencyMs:
+          bucket.latencyCount > 0
+            ? Math.round(bucket.latencyTotalMs / bucket.latencyCount)
+            : null,
+      })),
+    };
+  });
+}
+
+export function buildSiteAvailabilitySummaries(
+  sites: SiteAvailabilitySiteRow[],
+  logs: SiteAvailabilityLogRow[],
+  now = new Date(),
+) {
+  const endLocal = getLocalHourAnchor(now);
+  const startLocal = new Date(
+    endLocal.getTime() -
+      (SITE_AVAILABILITY_BUCKET_COUNT - 1) * SITE_AVAILABILITY_BUCKET_MS,
+  );
+  const startMs = startLocal.getTime();
+  const rangeMs = SITE_AVAILABILITY_BUCKET_COUNT * SITE_AVAILABILITY_BUCKET_MS;
+  const siteMap = createSiteAvailabilityAccumulatorMap(sites, startMs);
 
   for (const log of logs) {
     if (log.siteId == null) continue;
@@ -139,8 +197,7 @@ export function buildSiteAvailabilitySummaries(
 
     const parsed = parseStoredUtcDateTime(log.createdAt);
     if (!parsed) continue;
-    const timestampMs = parsed.getTime();
-    const diffMs = timestampMs - startMs;
+    const diffMs = parsed.getTime() - startMs;
     if (diffMs < 0 || diffMs >= rangeMs) continue;
 
     const bucketIndex = Math.floor(diffMs / SITE_AVAILABILITY_BUCKET_MS);
@@ -166,41 +223,53 @@ export function buildSiteAvailabilitySummaries(
     }
   }
 
-  return sites.map((site) => {
-    const aggregate = siteMap.get(site.id)!;
-    return {
-      siteId: site.id,
-      siteName: site.name,
-      siteUrl: site.url,
-      platform: site.platform,
-      totalRequests: aggregate.totalRequests,
-      successCount: aggregate.successCount,
-      failedCount: aggregate.failedCount,
-      availabilityPercent:
-        aggregate.totalRequests > 0
-          ? roundPercent(
-              (aggregate.successCount / aggregate.totalRequests) * 100,
-            )
-          : null,
-      averageLatencyMs:
-        aggregate.latencyCount > 0
-          ? Math.round(aggregate.latencyTotalMs / aggregate.latencyCount)
-          : null,
-      buckets: aggregate.buckets.map((bucket) => ({
-        startUtc: bucket.startUtc,
-        label: bucket.label,
-        totalRequests: bucket.totalRequests,
-        successCount: bucket.successCount,
-        failedCount: bucket.failedCount,
-        availabilityPercent:
-          bucket.totalRequests > 0
-            ? roundPercent((bucket.successCount / bucket.totalRequests) * 100)
-            : null,
-        averageLatencyMs:
-          bucket.latencyCount > 0
-            ? Math.round(bucket.latencyTotalMs / bucket.latencyCount)
-            : null,
-      })),
-    };
-  });
+  return finalizeSiteAvailabilitySummaries(sites, siteMap);
+}
+
+export function buildSiteAvailabilitySummariesFromHourlyAggregates(
+  sites: SiteAvailabilitySiteRow[],
+  rows: SiteAvailabilityHourAggregateRow[],
+  now = new Date(),
+) {
+  const endLocal = getLocalHourAnchor(now);
+  const startLocal = new Date(
+    endLocal.getTime() -
+      (SITE_AVAILABILITY_BUCKET_COUNT - 1) * SITE_AVAILABILITY_BUCKET_MS,
+  );
+  const startMs = startLocal.getTime();
+  const rangeMs = SITE_AVAILABILITY_BUCKET_COUNT * SITE_AVAILABILITY_BUCKET_MS;
+  const siteMap = createSiteAvailabilityAccumulatorMap(sites, startMs);
+
+  for (const row of rows) {
+    if (row.siteId == null) continue;
+    const target = siteMap.get(row.siteId);
+    if (!target) continue;
+
+    const parsed = parseStoredUtcDateTime(row.hourStartUtc);
+    if (!parsed) continue;
+    const diffMs = parsed.getTime() - startMs;
+    if (diffMs < 0 || diffMs >= rangeMs) continue;
+
+    const bucketIndex = Math.floor(diffMs / SITE_AVAILABILITY_BUCKET_MS);
+    const bucket = target.buckets[bucketIndex];
+    const totalRequests = Math.max(0, Number(row.totalRequests || 0));
+    const successCount = Math.max(0, Number(row.successCount || 0));
+    const failedCount = Math.max(0, Number(row.failedCount || 0));
+    const totalLatencyMs = Math.max(0, Number(row.totalLatencyMs || 0));
+    const latencyCount = Math.max(0, Number(row.latencyCount || 0));
+
+    target.totalRequests += totalRequests;
+    target.successCount += successCount;
+    target.failedCount += failedCount;
+    target.latencyTotalMs += totalLatencyMs;
+    target.latencyCount += latencyCount;
+
+    bucket.totalRequests += totalRequests;
+    bucket.successCount += successCount;
+    bucket.failedCount += failedCount;
+    bucket.latencyTotalMs += totalLatencyMs;
+    bucket.latencyCount += latencyCount;
+  }
+
+  return finalizeSiteAvailabilitySummaries(sites, siteMap);
 }

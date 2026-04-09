@@ -12,10 +12,14 @@ type AdminSnapshotIdentity = {
 
 type AdminSnapshotRow = typeof schema.adminSnapshots.$inferSelect;
 
+function serializeSnapshotKey(key: string) {
+  return JSON.stringify(key);
+}
+
 function buildSnapshotWhere(identity: AdminSnapshotIdentity) {
   return and(
     eq(schema.adminSnapshots.namespace, identity.namespace),
-    eq(schema.adminSnapshots.snapshotKey, identity.key),
+    eq(schema.adminSnapshots.snapshotKey, serializeSnapshotKey(identity.key)),
   );
 }
 
@@ -69,7 +73,7 @@ export async function writeAdminSnapshot<T>(
   const payload = JSON.stringify(record.payload);
   const values = {
     namespace: identity.namespace,
-    snapshotKey: identity.key,
+    snapshotKey: serializeSnapshotKey(identity.key),
     payload,
     generatedAt: record.generatedAt,
     expiresAt: record.expiresAt,
