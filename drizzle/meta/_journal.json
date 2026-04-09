@@ -148,6 +148,13 @@
       "when": 1775441167045,
       "tag": "0021_young_shriek",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1775713163948,
+      "tag": "0022_admin_snapshots",
+      "breakpoints": true
     }
   ]
 }

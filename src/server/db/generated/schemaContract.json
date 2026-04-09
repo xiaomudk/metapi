@@ -206,6 +206,64 @@
         }
       }
     },
+    "admin_snapshots": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "namespace": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "snapshot_key": {
+          "logicalType": "json",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "payload": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "generated_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "expires_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "stale_until": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
     "checkin_logs": {
       "columns": {
         "id": {
@@ -1869,6 +1927,31 @@
       "unique": false
     },
     {
+      "name": "admin_snapshots_expires_at_idx",
+      "table": "admin_snapshots",
+      "columns": [
+        "expires_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "admin_snapshots_namespace_key_unique",
+      "table": "admin_snapshots",
+      "columns": [
+        "namespace",
+        "snapshot_key"
+      ],
+      "unique": true
+    },
+    {
+      "name": "admin_snapshots_stale_until_idx",
+      "table": "admin_snapshots",
+      "columns": [
+        "stale_until"
+      ],
+      "unique": false
+    },
+    {
       "name": "checkin_logs_account_created_at_idx",
       "table": "checkin_logs",
       "columns": [
@@ -2393,6 +2476,14 @@
     }
   ],
   "uniques": [
+    {
+      "name": "admin_snapshots_namespace_key_unique",
+      "table": "admin_snapshots",
+      "columns": [
+        "namespace",
+        "snapshot_key"
+      ]
+    },
     {
       "name": "downstream_api_keys_key_unique",
       "table": "downstream_api_keys",

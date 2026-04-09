@@ -14,6 +14,7 @@ import {
   proxyCostSqlExpression,
   toRoundedMicroNumber,
 } from "./statsShared.js";
+import { createAdminSnapshotPersistence } from "./adminSnapshotStore.js";
 
 export type SiteStatsSnapshotPayload = {
   distribution: Array<{
@@ -164,6 +165,10 @@ export async function getSiteStatsSnapshot(options?: {
     key: JSON.stringify({ days }),
     ttlMs: SITE_STATS_TTL_MS,
     forceRefresh: options?.forceRefresh,
+    persistence: createAdminSnapshotPersistence<SiteStatsSnapshotPayload>({
+      namespace: "site-stats",
+      key: JSON.stringify({ days }),
+    }),
     loader: async () => loadSiteStatsSnapshotPayload(days),
   });
 }

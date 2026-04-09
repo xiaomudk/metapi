@@ -11,6 +11,18 @@ export type SnapshotEnvelope<T> = {
   cacheStatus: SnapshotCacheStatus;
 };
 
+export type PersistedSnapshotRecord<T> = {
+  payload: T;
+  generatedAt: string;
+  expiresAt: string;
+  staleUntil: string;
+};
+
+export type SnapshotPersistenceAdapter<T> = {
+  read: () => Promise<PersistedSnapshotRecord<T> | null>;
+  write: (record: PersistedSnapshotRecord<T>) => Promise<void>;
+};
+
 type SnapshotCacheEntry<T> = {
   payload: T;
   generatedAtMs: number;
@@ -26,6 +38,7 @@ type ReadSnapshotOptions<T> = {
   staleMs?: number;
   forceRefresh?: boolean;
   loader: () => Promise<T>;
+  persistence?: SnapshotPersistenceAdapter<T>;
 };
 
 const snapshotCache = new Map<string, SnapshotCacheEntry<unknown>>();
@@ -43,12 +56,21 @@ async function loadAndStoreSnapshot<T>(
   loader: () => Promise<T>,
   ttlMs: number,
   staleMs: number,
+  persistence?: SnapshotPersistenceAdapter<T>,
 ) {
   const payload = await loader();
   const nowMs = Date.now();
-  const envelope: SnapshotEnvelope<T> = {
+  const persistedRecord: PersistedSnapshotRecord<T> = {
     payload,
     generatedAt: new Date(nowMs).toISOString(),
+    expiresAt: new Date(nowMs + Math.max(1, ttlMs)).toISOString(),
+    staleUntil: new Date(
+      nowMs + Math.max(Math.max(1, ttlMs), staleMs),
+    ).toISOString(),
+  };
+  const envelope: SnapshotEnvelope<T> = {
+    payload,
+    generatedAt: persistedRecord.generatedAt,
     cacheStatus: "miss",
   };
   snapshotCache.set(cacheKey, {
@@ -57,7 +79,26 @@ async function loadAndStoreSnapshot<T>(
     expiresAtMs: nowMs + Math.max(1, ttlMs),
     staleUntilMs: nowMs + Math.max(Math.max(1, ttlMs), staleMs),
   });
+  if (persistence) {
+    await persistence.write(persistedRecord);
+  }
   return envelope;
+}
+
+function parseSnapshotTimestamp(raw: string): number {
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function buildCacheEntryFromPersistedSnapshot<T>(
+  record: PersistedSnapshotRecord<T>,
+): SnapshotCacheEntry<T> {
+  return {
+    payload: record.payload,
+    generatedAtMs: parseSnapshotTimestamp(record.generatedAt),
+    expiresAtMs: parseSnapshotTimestamp(record.expiresAt),
+    staleUntilMs: parseSnapshotTimestamp(record.staleUntil),
+  };
 }
 
 export async function readSnapshotCache<T>(
@@ -75,9 +116,17 @@ export async function readSnapshotCache<T>(
 
   const cacheKey = buildCacheKey(options.namespace, options.key);
   const nowMs = Date.now();
-  const cached = snapshotCache.get(cacheKey) as
+  let cached = snapshotCache.get(cacheKey) as
     | SnapshotCacheEntry<T>
     | undefined;
+
+  if (!cached && !options.forceRefresh && options.persistence) {
+    const persisted = await options.persistence.read();
+    if (persisted) {
+      cached = buildCacheEntryFromPersistedSnapshot(persisted);
+      snapshotCache.set(cacheKey, cached as SnapshotCacheEntry<unknown>);
+    }
+  }
 
   if (
     !options.forceRefresh &&
@@ -102,6 +151,7 @@ export async function readSnapshotCache<T>(
         options.loader,
         options.ttlMs,
         staleMs,
+        options.persistence,
       ).finally(() => {
           const next = snapshotCache.get(cacheKey) as
             | SnapshotCacheEntry<T>
@@ -132,6 +182,7 @@ export async function readSnapshotCache<T>(
     options.loader,
     options.ttlMs,
     staleMs,
+    options.persistence,
   ).finally(() => {
     const next = snapshotCache.get(cacheKey) as
       | SnapshotCacheEntry<T>

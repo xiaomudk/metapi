@@ -19,6 +19,7 @@ import {
   toRoundedMicroNumber,
 } from "./statsShared.js";
 import { estimateRewardWithTodayIncomeFallback } from "./todayIncomeRewardService.js";
+import { createAdminSnapshotPersistence } from "./adminSnapshotStore.js";
 
 export type DashboardSummaryPayload = {
   totalBalance: number;
@@ -49,6 +50,16 @@ export type DashboardInsightsPayload = {
 const DASHBOARD_SUMMARY_TTL_MS = 12_000;
 const DASHBOARD_INSIGHTS_TTL_MS = 20_000;
 const SITE_AVAILABILITY_BUCKET_COUNT = 24;
+const dashboardSummaryPersistence =
+  createAdminSnapshotPersistence<DashboardSummaryPayload>({
+    namespace: "dashboard-summary",
+    key: "default",
+  });
+const dashboardInsightsPersistence =
+  createAdminSnapshotPersistence<DashboardInsightsPayload>({
+    namespace: "dashboard-insights",
+    key: "default",
+  });
 
 async function loadDashboardSummaryPayload(): Promise<DashboardSummaryPayload> {
   const accountRows = await db
@@ -342,6 +353,7 @@ export async function getDashboardSummarySnapshot(options?: {
     key: "default",
     ttlMs: DASHBOARD_SUMMARY_TTL_MS,
     forceRefresh: options?.forceRefresh,
+    persistence: dashboardSummaryPersistence,
     loader: loadDashboardSummaryPayload,
   });
 }
@@ -354,6 +366,7 @@ export async function getDashboardInsightsSnapshot(options?: {
     key: "default",
     ttlMs: DASHBOARD_INSIGHTS_TTL_MS,
     forceRefresh: options?.forceRefresh,
+    persistence: dashboardInsightsPersistence,
     loader: loadDashboardInsightsPayload,
   });
 }

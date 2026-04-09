@@ -12,7 +12,7 @@ describe('startupInfo', () => {
 
     expect(endpoints.baseUrl).toBe('http://127.0.0.1:4000');
     expect(endpoints.adminDashboardUrl).toBe('http://127.0.0.1:4000');
-    expect(endpoints.adminApiExample).toBe('http://127.0.0.1:4000/api/stats/dashboard');
+    expect(endpoints.adminApiExample).toBe('http://127.0.0.1:4000/api/stats/dashboard/snapshot-v2');
     expect(endpoints.proxyApiExample).toBe('http://127.0.0.1:4000/v1/chat/completions');
   });
 
@@ -26,7 +26,7 @@ describe('startupInfo', () => {
 
     expect(lines.some((line) => line.includes('metapi running'))).toBe(true);
     expect(lines.some((line) => line.includes('Dashboard: http://127.0.0.1:4000'))).toBe(true);
-    expect(lines.some((line) => line.includes('/api/stats/dashboard'))).toBe(true);
+    expect(lines.some((line) => line.includes('/api/stats/dashboard/snapshot-v2'))).toBe(true);
     expect(lines.some((line) => line.includes('/v1/chat/completions'))).toBe(true);
   });
 });

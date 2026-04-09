@@ -31,6 +31,7 @@ describe("accounts snapshot v2", () => {
   });
 
   beforeEach(async () => {
+    await db.delete(schema.adminSnapshots).run();
     await db.delete(schema.proxyLogs).run();
     await db.delete(schema.checkinLogs).run();
     await db.delete(schema.routeChannels).run();
@@ -130,5 +131,16 @@ describe("accounts snapshot v2", () => {
         todayReward: 3.2,
       }),
     ]);
+
+    const legacyResponse = await app.inject({
+      method: "GET",
+      url: "/api/accounts",
+    });
+    expect(legacyResponse.statusCode).toBe(200);
+    expect(legacyResponse.headers["deprecation"]).toBe("true");
+    expect(legacyResponse.headers["x-legacy-endpoint"]).toBe("true");
+    expect(String(legacyResponse.headers["link"] || "")).toContain(
+      "/api/accounts/snapshot-v2",
+    );
   });
 });

@@ -50,6 +50,7 @@ import {
   getDashboardSummarySnapshot,
 } from "../../services/dashboardSnapshotService.js";
 import { getSiteStatsSnapshot } from "../../services/siteStatsSnapshotService.js";
+import { markLegacyEndpoint } from "../../services/legacyEndpointDeprecation.js";
 
 function parseBooleanFlag(raw?: string): boolean {
   if (!raw) return false;
@@ -633,6 +634,10 @@ export async function statsRoutes(app: FastifyInstance) {
   app.get<{ Querystring: { refresh?: string } }>(
     "/api/stats/dashboard",
     async (request, reply) => {
+      markLegacyEndpoint(reply, [
+        "/api/stats/dashboard/snapshot-v2",
+        "/api/stats/dashboard/insights-v2",
+      ]);
       const forceRefresh = parseBooleanFlag(request.query.refresh);
       const [summary, insights] = await Promise.all([
         getDashboardSummarySnapshot({ forceRefresh }),
@@ -932,7 +937,11 @@ export async function statsRoutes(app: FastifyInstance) {
       from?: string;
       to?: string;
     };
-  }>("/api/stats/proxy-logs", async (request) => {
+  }>("/api/stats/proxy-logs", async (request, reply) => {
+    markLegacyEndpoint(reply, [
+      "/api/stats/proxy-logs/query-v2",
+      "/api/stats/proxy-logs/meta-v2",
+    ]);
     const [queryPayload, metaPayload] = await Promise.all([
       loadProxyLogsQueryPayload(request.query),
       loadProxyLogsMetaPayload(request.query),
@@ -1966,7 +1975,8 @@ export async function statsRoutes(app: FastifyInstance) {
   // Site distribution – per-site aggregate data
   app.get<{ Querystring: { days?: string; refresh?: string } }>(
     "/api/stats/site-distribution",
-    async (request) => {
+    async (request, reply) => {
+      markLegacyEndpoint(reply, "/api/stats/site-snapshot-v2");
       const snapshot = await getSiteStatsSnapshot({
         days: request.query.days ? parseInt(request.query.days, 10) : 7,
         forceRefresh: parseBooleanFlag(request.query.refresh),
@@ -1978,7 +1988,8 @@ export async function statsRoutes(app: FastifyInstance) {
   // Site trend – daily spend/calls broken down by site
   app.get<{ Querystring: { days?: string; refresh?: string } }>(
     "/api/stats/site-trend",
-    async (request) => {
+    async (request, reply) => {
+      markLegacyEndpoint(reply, "/api/stats/site-snapshot-v2");
       const snapshot = await getSiteStatsSnapshot({
         days: request.query.days ? parseInt(request.query.days, 10) : 7,
         forceRefresh: parseBooleanFlag(request.query.refresh),

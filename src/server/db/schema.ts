@@ -374,6 +374,22 @@ export const settings = sqliteTable('settings', {
   value: text('value'), // JSON
 });
 
+export const adminSnapshots = sqliteTable('admin_snapshots', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  namespace: text('namespace').notNull(),
+  snapshotKey: text('snapshot_key').notNull(),
+  payload: text('payload').notNull(),
+  generatedAt: text('generated_at').notNull(),
+  expiresAt: text('expires_at').notNull(),
+  staleUntil: text('stale_until').notNull(),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  namespaceKeyUnique: uniqueIndex('admin_snapshots_namespace_key_unique').on(table.namespace, table.snapshotKey),
+  expiresAtIdx: index('admin_snapshots_expires_at_idx').on(table.expiresAt),
+  staleUntilIdx: index('admin_snapshots_stale_until_idx').on(table.staleUntil),
+}));
+
 export const downstreamApiKeys = sqliteTable('downstream_api_keys', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),

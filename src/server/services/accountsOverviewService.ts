@@ -16,6 +16,7 @@ import {
   type SnapshotEnvelope,
 } from "./snapshotCacheService.js";
 import { estimateRewardWithTodayIncomeFallback } from "./todayIncomeRewardService.js";
+import { createAdminSnapshotPersistence } from "./adminSnapshotStore.js";
 
 export type AccountCapabilities = {
   canCheckin: boolean;
@@ -38,6 +39,11 @@ export type AccountsSnapshotPayload = {
 };
 
 const ACCOUNTS_SNAPSHOT_TTL_MS = 15_000;
+const accountsSnapshotPersistence =
+  createAdminSnapshotPersistence<AccountsSnapshotPayload>({
+    namespace: "accounts-snapshot",
+    key: "all",
+  });
 
 function hasSessionTokenValue(value: string | null | undefined): boolean {
   return typeof value === "string" && value.trim().length > 0;
@@ -218,6 +224,7 @@ export async function getAccountsSnapshot(options?: {
     key: "all",
     ttlMs: ACCOUNTS_SNAPSHOT_TTL_MS,
     forceRefresh: options?.forceRefresh,
+    persistence: accountsSnapshotPersistence,
     loader: loadAccountsSnapshotPayload,
   });
 }

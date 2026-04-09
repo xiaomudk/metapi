@@ -27,6 +27,7 @@ describe("stats snapshot v2 routes", () => {
   });
 
   beforeEach(async () => {
+    await db.delete(schema.adminSnapshots).run();
     await db.delete(schema.proxyLogs).run();
     await db.delete(schema.checkinLogs).run();
     await db.delete(schema.routeChannels).run();
@@ -142,5 +143,16 @@ describe("stats snapshot v2 routes", () => {
     expect(siteSnapshot.sites).toEqual([
       expect.objectContaining({ id: site.id, name: "stats-site" }),
     ]);
+
+    const legacyDashboardResponse = await app.inject({
+      method: "GET",
+      url: "/api/stats/dashboard",
+    });
+    expect(legacyDashboardResponse.statusCode).toBe(200);
+    expect(legacyDashboardResponse.headers["deprecation"]).toBe("true");
+    expect(legacyDashboardResponse.headers["x-legacy-endpoint"]).toBe("true");
+    expect(String(legacyDashboardResponse.headers["link"] || "")).toContain(
+      "/api/stats/dashboard/snapshot-v2",
+    );
   });
 });
