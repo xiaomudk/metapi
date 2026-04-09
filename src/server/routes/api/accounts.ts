@@ -498,9 +498,6 @@ export async function accountsRoutes(app: FastifyInstance) {
   );
 
   // Login to a site and auto-create account
-  // False positive: this Fastify route is already throttled by
-  // `limitAccountLogin`, which is created by `createRateLimitGuard`.
-  // lgtm[js/missing-rate-limiting]
   app.post<{ Body: unknown }>(
     "/api/accounts/login",
     { preHandler: [limitAccountLogin] },
@@ -666,9 +663,6 @@ export async function accountsRoutes(app: FastifyInstance) {
   );
 
   // Verify credentials against a site.
-  // False positive: this Fastify route is already throttled by
-  // `limitAccountVerifyToken`, which is created by `createRateLimitGuard`.
-  // lgtm[js/missing-rate-limiting]
   app.post<{ Body: unknown }>(
     "/api/accounts/verify-token",
     { preHandler: [limitAccountVerifyToken] },
