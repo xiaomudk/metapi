@@ -221,7 +221,7 @@
           "primaryKey": false
         },
         "snapshot_key": {
-          "logicalType": "json",
+          "logicalType": "text",
           "notNull": true,
           "defaultValue": null,
           "primaryKey": false
