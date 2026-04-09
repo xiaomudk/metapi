@@ -1,6 +1,6 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -15,8 +15,10 @@ describe("accounts snapshot v2", () => {
   let db: DbModule["db"];
   let schema: DbModule["schema"];
   let dataDir = "";
+  let previousDataDir: string | undefined;
 
   beforeAll(async () => {
+    previousDataDir = process.env.DATA_DIR;
     dataDir = mkdtempSync(join(tmpdir(), "metapi-accounts-snapshot-v2-"));
     process.env.DATA_DIR = dataDir;
 
@@ -45,7 +47,12 @@ describe("accounts snapshot v2", () => {
 
   afterAll(async () => {
     await app.close();
-    delete process.env.DATA_DIR;
+    if (previousDataDir === undefined) {
+      delete process.env.DATA_DIR;
+    } else {
+      process.env.DATA_DIR = previousDataDir;
+    }
+    rmSync(dataDir, { recursive: true, force: true });
   });
 
   it("returns accounts and sites in one snapshot payload", async () => {
@@ -103,7 +110,7 @@ describe("accounts snapshot v2", () => {
 
     const response = await app.inject({
       method: "GET",
-      url: "/api/accounts/snapshot-v2",
+      url: "/api/accounts",
     });
 
     expect(response.statusCode).toBe(200);
@@ -131,16 +138,5 @@ describe("accounts snapshot v2", () => {
         todayReward: 3.2,
       }),
     ]);
-
-    const legacyResponse = await app.inject({
-      method: "GET",
-      url: "/api/accounts",
-    });
-    expect(legacyResponse.statusCode).toBe(200);
-    expect(legacyResponse.headers["deprecation"]).toBe("true");
-    expect(legacyResponse.headers["x-legacy-endpoint"]).toBe("true");
-    expect(String(legacyResponse.headers["link"] || "")).toContain(
-      "/api/accounts/snapshot-v2",
-    );
   });
 });

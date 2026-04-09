@@ -5,6 +5,8 @@ import { parseCheckinRewardAmount } from "./checkinRewardParser.js";
 import {
   formatUtcSqlDateTime,
   getLocalDayRangeUtc,
+  getLocalHourAnchor,
+  getLocalHourRangeStartUtc,
   getLocalRangeStartUtc,
 } from "./localTimeService.js";
 import {
@@ -114,11 +116,11 @@ async function loadDashboardSummaryPayload(): Promise<DashboardSummaryPayload> {
         totalUsed: sql<number>`coalesce(sum(${proxyCostSqlExpression()}), 0)`,
       })
       .from(schema.proxyLogs)
-      .leftJoin(
+      .innerJoin(
         schema.accounts,
         eq(schema.proxyLogs.accountId, schema.accounts.id),
       )
-      .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+      .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
       .where(eq(schema.sites.status, "active"))
       .get(),
     db
@@ -129,11 +131,11 @@ async function loadDashboardSummaryPayload(): Promise<DashboardSummaryPayload> {
         totalTokens: sql<number>`coalesce(sum(coalesce(${schema.proxyLogs.totalTokens}, 0)), 0)`,
       })
       .from(schema.proxyLogs)
-      .leftJoin(
+      .innerJoin(
         schema.accounts,
         eq(schema.proxyLogs.accountId, schema.accounts.id),
       )
-      .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+      .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
       .where(
         and(
           gte(schema.proxyLogs.createdAt, last24hDate),
@@ -147,11 +149,11 @@ async function loadDashboardSummaryPayload(): Promise<DashboardSummaryPayload> {
         totalTokens: sql<number>`coalesce(sum(coalesce(${schema.proxyLogs.totalTokens}, 0)), 0)`,
       })
       .from(schema.proxyLogs)
-      .leftJoin(
+      .innerJoin(
         schema.accounts,
         eq(schema.proxyLogs.accountId, schema.accounts.id),
       )
-      .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+      .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
       .where(
         and(
           gte(schema.proxyLogs.createdAt, lastMinuteDate),
@@ -164,11 +166,11 @@ async function loadDashboardSummaryPayload(): Promise<DashboardSummaryPayload> {
         todaySpend: sql<number>`coalesce(sum(coalesce(${schema.proxyLogs.estimatedCost}, 0)), 0)`,
       })
       .from(schema.proxyLogs)
-      .leftJoin(
+      .innerJoin(
         schema.accounts,
         eq(schema.proxyLogs.accountId, schema.accounts.id),
       )
-      .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+      .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
       .where(
         and(
           gte(schema.proxyLogs.createdAt, todayStartUtc),
@@ -251,20 +253,12 @@ async function loadDashboardSummaryPayload(): Promise<DashboardSummaryPayload> {
 }
 
 async function loadDashboardInsightsPayload(): Promise<DashboardInsightsPayload> {
-  const nowTs = Date.now();
+  const siteAvailabilityNow = getLocalHourAnchor();
   const last7dDate = getLocalRangeStartUtc(7);
   const recentProxyLogFields = buildProxyLogModelAnalysisSelectFields();
-  const siteAvailabilityNow = new Date();
-  const siteAvailabilitySinceUtc = formatUtcSqlDateTime(
-    new Date(
-      siteAvailabilityNow.getFullYear(),
-      siteAvailabilityNow.getMonth(),
-      siteAvailabilityNow.getDate(),
-      siteAvailabilityNow.getHours() - (SITE_AVAILABILITY_BUCKET_COUNT - 1),
-      0,
-      0,
-      0,
-    ),
+  const siteAvailabilitySinceUtc = getLocalHourRangeStartUtc(
+    SITE_AVAILABILITY_BUCKET_COUNT,
+    siteAvailabilityNow,
   );
 
   const [recentProxyLogs, activeSites, siteAvailabilityLogs] =
@@ -336,7 +330,7 @@ async function loadDashboardInsightsPayload(): Promise<DashboardInsightsPayload>
     siteAvailability: buildSiteAvailabilitySummaries(
       sortedSites,
       siteAvailabilityLogs,
-      new Date(nowTs),
+      siteAvailabilityNow,
     ),
     modelAnalysis: buildModelAnalysis(
       recentProxyLogs.map((row) => row.proxy_logs),

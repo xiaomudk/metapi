@@ -1,6 +1,6 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -11,19 +11,23 @@ describe("stats snapshot v2 routes", () => {
   let db: DbModule["db"];
   let schema: DbModule["schema"];
   let dataDir = "";
+  let previousDataDir: string | undefined;
 
   beforeAll(async () => {
+    previousDataDir = process.env.DATA_DIR;
     dataDir = mkdtempSync(join(tmpdir(), "metapi-stats-snapshot-v2-"));
     process.env.DATA_DIR = dataDir;
 
     await import("../../db/migrate.js");
     const dbModule = await import("../../db/index.js");
     const routesModule = await import("./stats.js");
+    const sitesRoutesModule = await import("./sites.js");
     db = dbModule.db;
     schema = dbModule.schema;
 
     app = Fastify();
     await app.register(routesModule.statsRoutes);
+    await app.register(sitesRoutesModule.sitesRoutes);
   });
 
   beforeEach(async () => {
@@ -41,7 +45,12 @@ describe("stats snapshot v2 routes", () => {
 
   afterAll(async () => {
     await app.close();
-    delete process.env.DATA_DIR;
+    if (previousDataDir === undefined) {
+      delete process.env.DATA_DIR;
+    } else {
+      process.env.DATA_DIR = previousDataDir;
+    }
+    rmSync(dataDir, { recursive: true, force: true });
   });
 
   it("returns dashboard and site snapshot payloads for progressive loading", async () => {
@@ -94,7 +103,7 @@ describe("stats snapshot v2 routes", () => {
 
     const summaryResponse = await app.inject({
       method: "GET",
-      url: "/api/stats/dashboard/snapshot-v2",
+      url: "/api/stats/dashboard?view=summary",
     });
     expect(summaryResponse.statusCode).toBe(200);
     expect(summaryResponse.headers["x-dashboard-summary-cache"]).toBeTruthy();
@@ -109,7 +118,7 @@ describe("stats snapshot v2 routes", () => {
 
     const insightsResponse = await app.inject({
       method: "GET",
-      url: "/api/stats/dashboard/insights-v2",
+      url: "/api/stats/dashboard?view=insights",
     });
     expect(insightsResponse.statusCode).toBe(200);
     const insights = insightsResponse.json() as {
@@ -123,36 +132,36 @@ describe("stats snapshot v2 routes", () => {
     ]);
     expect(insights.modelAnalysis.totals.calls).toBe(2);
 
-    const siteSnapshotResponse = await app.inject({
+    const siteDistributionResponse = await app.inject({
       method: "GET",
-      url: "/api/stats/site-snapshot-v2?days=7",
+      url: "/api/stats/site-distribution?days=7",
     });
-    expect(siteSnapshotResponse.statusCode).toBe(200);
-    expect(siteSnapshotResponse.headers["x-site-stats-cache"]).toBeTruthy();
-    const siteSnapshot = siteSnapshotResponse.json() as {
-      generatedAt: string;
+    expect(siteDistributionResponse.statusCode).toBe(200);
+    const siteDistribution = siteDistributionResponse.json() as {
       distribution: Array<{ siteId: number; totalSpend: number }>;
-      trend: Array<{ date: string }>;
-      sites: Array<{ id: number; name: string }>;
     };
-    expect(Date.parse(siteSnapshot.generatedAt)).not.toBeNaN();
-    expect(siteSnapshot.distribution).toEqual([
+    expect(siteDistribution.distribution).toEqual([
       expect.objectContaining({ siteId: site.id, totalSpend: 0.75 }),
     ]);
-    expect(siteSnapshot.trend.length).toBeGreaterThan(0);
-    expect(siteSnapshot.sites).toEqual([
+
+    const siteTrendResponse = await app.inject({
+      method: "GET",
+      url: "/api/stats/site-trend?days=7",
+    });
+    expect(siteTrendResponse.statusCode).toBe(200);
+    const siteTrend = siteTrendResponse.json() as {
+      trend: Array<{ date: string }>;
+    };
+    expect(siteTrend.trend.length).toBeGreaterThan(0);
+
+    const sitesResponse = await app.inject({
+      method: "GET",
+      url: "/api/sites",
+    });
+    expect(sitesResponse.statusCode).toBe(200);
+    const sites = sitesResponse.json() as Array<{ id: number; name: string }>;
+    expect(sites).toEqual([
       expect.objectContaining({ id: site.id, name: "stats-site" }),
     ]);
-
-    const legacyDashboardResponse = await app.inject({
-      method: "GET",
-      url: "/api/stats/dashboard",
-    });
-    expect(legacyDashboardResponse.statusCode).toBe(200);
-    expect(legacyDashboardResponse.headers["deprecation"]).toBe("true");
-    expect(legacyDashboardResponse.headers["x-legacy-endpoint"]).toBe("true");
-    expect(String(legacyDashboardResponse.headers["link"] || "")).toContain(
-      "/api/stats/dashboard/snapshot-v2",
-    );
   });
 });

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,8 +13,10 @@ describe("adminSnapshotStore", () => {
   let writeAdminSnapshot: AdminSnapshotStoreModule["writeAdminSnapshot"];
   let deleteExpiredAdminSnapshots: AdminSnapshotStoreModule["deleteExpiredAdminSnapshots"];
   let dataDir = "";
+  let previousDataDir: string | undefined;
 
   beforeAll(async () => {
+    previousDataDir = process.env.DATA_DIR;
     dataDir = mkdtempSync(join(tmpdir(), "metapi-admin-snapshot-store-"));
     process.env.DATA_DIR = dataDir;
 
@@ -33,7 +35,12 @@ describe("adminSnapshotStore", () => {
   });
 
   afterAll(() => {
-    delete process.env.DATA_DIR;
+    if (previousDataDir === undefined) {
+      delete process.env.DATA_DIR;
+    } else {
+      process.env.DATA_DIR = previousDataDir;
+    }
+    rmSync(dataDir, { recursive: true, force: true });
   });
 
   it("persists and reloads admin snapshot payloads from the runtime database", async () => {

@@ -67,12 +67,6 @@ export async function writeAdminSnapshot<T>(
   record: PersistedSnapshotRecord<T>,
 ): Promise<void> {
   const payload = JSON.stringify(record.payload);
-  const existing = await db
-    .select({ id: schema.adminSnapshots.id })
-    .from(schema.adminSnapshots)
-    .where(buildSnapshotWhere(identity))
-    .get();
-
   const values = {
     namespace: identity.namespace,
     snapshotKey: identity.key,
@@ -83,18 +77,22 @@ export async function writeAdminSnapshot<T>(
     updatedAt: new Date().toISOString(),
   };
 
-  if (existing?.id) {
-    await db
-      .update(schema.adminSnapshots)
-      .set(values)
-      .where(eq(schema.adminSnapshots.id, existing.id))
-      .run();
-    return;
-  }
-
-  await db
+  await (db
     .insert(schema.adminSnapshots)
-    .values(values)
+    .values(values) as any)
+    .onConflictDoUpdate({
+      target: [
+        schema.adminSnapshots.namespace,
+        schema.adminSnapshots.snapshotKey,
+      ],
+      set: {
+        payload: values.payload,
+        generatedAt: values.generatedAt,
+        expiresAt: values.expiresAt,
+        staleUntil: values.staleUntil,
+        updatedAt: values.updatedAt,
+      },
+    })
     .run();
 }
 

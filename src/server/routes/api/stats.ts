@@ -50,12 +50,27 @@ import {
   getDashboardSummarySnapshot,
 } from "../../services/dashboardSnapshotService.js";
 import { getSiteStatsSnapshot } from "../../services/siteStatsSnapshotService.js";
-import { markLegacyEndpoint } from "../../services/legacyEndpointDeprecation.js";
 
 function parseBooleanFlag(raw?: string): boolean {
   if (!raw) return false;
   const normalized = raw.trim().toLowerCase();
   return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
+function normalizeDashboardView(raw?: string) {
+  const normalized = (raw || "").trim().toLowerCase();
+  if (normalized === "summary" || normalized === "insights") {
+    return normalized;
+  }
+  return "full";
+}
+
+function normalizeProxyLogsView(raw?: string) {
+  const normalized = (raw || "").trim().toLowerCase();
+  if (normalized === "query" || normalized === "meta") {
+    return normalized;
+  }
+  return "full";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -630,15 +645,28 @@ export async function statsRoutes(app: FastifyInstance) {
   const proxyLogModelAnalysisFields = buildProxyLogModelAnalysisSelectFields();
   const proxyLogSiteTrendFields = buildProxyLogSiteTrendSelectFields();
 
-  // Dashboard summary
-  app.get<{ Querystring: { refresh?: string } }>(
+  app.get<{ Querystring: { refresh?: string; view?: string } }>(
     "/api/stats/dashboard",
     async (request, reply) => {
-      markLegacyEndpoint(reply, [
-        "/api/stats/dashboard/snapshot-v2",
-        "/api/stats/dashboard/insights-v2",
-      ]);
       const forceRefresh = parseBooleanFlag(request.query.refresh);
+      const view = normalizeDashboardView(request.query.view);
+      if (view === "summary") {
+        const snapshot = await getDashboardSummarySnapshot({ forceRefresh });
+        reply.header("x-dashboard-summary-cache", snapshot.cacheStatus);
+        return {
+          generatedAt: snapshot.generatedAt,
+          ...snapshot.payload,
+        };
+      }
+      if (view === "insights") {
+        const snapshot = await getDashboardInsightsSnapshot({ forceRefresh });
+        reply.header("x-dashboard-insights-cache", snapshot.cacheStatus);
+        return {
+          generatedAt: snapshot.generatedAt,
+          ...snapshot.payload,
+        };
+      }
+
       const [summary, insights] = await Promise.all([
         getDashboardSummarySnapshot({ forceRefresh }),
         getDashboardInsightsSnapshot({ forceRefresh }),
@@ -646,36 +674,9 @@ export async function statsRoutes(app: FastifyInstance) {
       reply.header("x-dashboard-summary-cache", summary.cacheStatus);
       reply.header("x-dashboard-insights-cache", insights.cacheStatus);
       return {
+        generatedAt: summary.generatedAt,
         ...summary.payload,
         ...insights.payload,
-      };
-    },
-  );
-
-  app.get<{ Querystring: { refresh?: string } }>(
-    "/api/stats/dashboard/snapshot-v2",
-    async (request, reply) => {
-      const snapshot = await getDashboardSummarySnapshot({
-        forceRefresh: parseBooleanFlag(request.query.refresh),
-      });
-      reply.header("x-dashboard-summary-cache", snapshot.cacheStatus);
-      return {
-        generatedAt: snapshot.generatedAt,
-        ...snapshot.payload,
-      };
-    },
-  );
-
-  app.get<{ Querystring: { refresh?: string } }>(
-    "/api/stats/dashboard/insights-v2",
-    async (request, reply) => {
-      const snapshot = await getDashboardInsightsSnapshot({
-        forceRefresh: parseBooleanFlag(request.query.refresh),
-      });
-      reply.header("x-dashboard-insights-cache", snapshot.cacheStatus);
-      return {
-        generatedAt: snapshot.generatedAt,
-        ...snapshot.payload,
       };
     },
   );
@@ -936,12 +937,16 @@ export async function statsRoutes(app: FastifyInstance) {
       siteId?: string;
       from?: string;
       to?: string;
+      view?: string;
     };
   }>("/api/stats/proxy-logs", async (request, reply) => {
-    markLegacyEndpoint(reply, [
-      "/api/stats/proxy-logs/query-v2",
-      "/api/stats/proxy-logs/meta-v2",
-    ]);
+    const view = normalizeProxyLogsView(request.query.view);
+    if (view === "query") {
+      return loadProxyLogsQueryPayload(request.query);
+    }
+    if (view === "meta") {
+      return loadProxyLogsMetaPayload(request.query);
+    }
     const [queryPayload, metaPayload] = await Promise.all([
       loadProxyLogsQueryPayload(request.query),
       loadProxyLogsMetaPayload(request.query),
@@ -950,35 +955,8 @@ export async function statsRoutes(app: FastifyInstance) {
       ...queryPayload,
       clientOptions: metaPayload.clientOptions,
       summary: metaPayload.summary,
+      sites: metaPayload.sites,
     };
-  });
-
-  app.get<{
-    Querystring: {
-      limit?: string;
-      offset?: string;
-      status?: string;
-      search?: string;
-      client?: string;
-      siteId?: string;
-      from?: string;
-      to?: string;
-    };
-  }>("/api/stats/proxy-logs/query-v2", async (request) => {
-    return loadProxyLogsQueryPayload(request.query);
-  });
-
-  app.get<{
-    Querystring: {
-      status?: string;
-      search?: string;
-      client?: string;
-      siteId?: string;
-      from?: string;
-      to?: string;
-    };
-  }>("/api/stats/proxy-logs/meta-v2", async (request) => {
-    return loadProxyLogsMetaPayload(request.query);
   });
 
   app.get<{ Params: { id: string } }>(
@@ -1975,8 +1953,7 @@ export async function statsRoutes(app: FastifyInstance) {
   // Site distribution – per-site aggregate data
   app.get<{ Querystring: { days?: string; refresh?: string } }>(
     "/api/stats/site-distribution",
-    async (request, reply) => {
-      markLegacyEndpoint(reply, "/api/stats/site-snapshot-v2");
+    async (request) => {
       const snapshot = await getSiteStatsSnapshot({
         days: request.query.days ? parseInt(request.query.days, 10) : 7,
         forceRefresh: parseBooleanFlag(request.query.refresh),
@@ -1988,28 +1965,12 @@ export async function statsRoutes(app: FastifyInstance) {
   // Site trend – daily spend/calls broken down by site
   app.get<{ Querystring: { days?: string; refresh?: string } }>(
     "/api/stats/site-trend",
-    async (request, reply) => {
-      markLegacyEndpoint(reply, "/api/stats/site-snapshot-v2");
+    async (request) => {
       const snapshot = await getSiteStatsSnapshot({
         days: request.query.days ? parseInt(request.query.days, 10) : 7,
         forceRefresh: parseBooleanFlag(request.query.refresh),
       });
       return { trend: snapshot.payload.trend };
-    },
-  );
-
-  app.get<{ Querystring: { days?: string; refresh?: string } }>(
-    "/api/stats/site-snapshot-v2",
-    async (request, reply) => {
-      const snapshot = await getSiteStatsSnapshot({
-        days: request.query.days ? parseInt(request.query.days, 10) : 7,
-        forceRefresh: parseBooleanFlag(request.query.refresh),
-      });
-      reply.header("x-site-stats-cache", snapshot.cacheStatus);
-      return {
-        generatedAt: snapshot.generatedAt,
-        ...snapshot.payload,
-      };
     },
   );
 

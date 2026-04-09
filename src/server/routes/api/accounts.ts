@@ -58,7 +58,6 @@ import {
   parseBatchApiKeys,
 } from "../../services/apiKeyBatch.js";
 import { createManualAccount } from "../../services/manualAccountCreationService.js";
-import { markLegacyEndpoint } from "../../services/legacyEndpointDeprecation.js";
 
 type AccountWithSiteRow = {
   accounts: typeof schema.accounts.$inferSelect;
@@ -485,17 +484,6 @@ export async function accountsRoutes(app: FastifyInstance) {
   // List all accounts (with site info)
   app.get<{ Querystring: { refresh?: string } }>(
     "/api/accounts",
-    async (request, reply) => {
-      markLegacyEndpoint(reply, "/api/accounts/snapshot-v2");
-      const snapshot = await getAccountsSnapshot({
-        forceRefresh: parseBooleanFlag(request.query.refresh),
-      });
-      return snapshot.payload.accounts;
-    },
-  );
-
-  app.get<{ Querystring: { refresh?: string } }>(
-    "/api/accounts/snapshot-v2",
     async (request, reply) => {
       const snapshot = await getAccountsSnapshot({
         forceRefresh: parseBooleanFlag(request.query.refresh),

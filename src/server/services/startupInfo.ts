@@ -24,7 +24,7 @@ export function buildStartupEndpoints(input: StartupSummaryInput): StartupEndpoi
   const displayHost = resolveDisplayHost(input.host);
   const baseUrl = `http://${displayHost}:${input.port}`;
 
-  const adminApiExample = `${baseUrl}/api/stats/dashboard/snapshot-v2`;
+  const adminApiExample = `${baseUrl}/api/stats/dashboard`;
   const proxyApiExample = `${baseUrl}/v1/chat/completions`;
 
   return {

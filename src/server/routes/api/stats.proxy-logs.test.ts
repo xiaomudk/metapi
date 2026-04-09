@@ -762,7 +762,7 @@ describe("stats proxy logs routes", () => {
 
     const queryResponse = await app.inject({
       method: "GET",
-      url: "/api/stats/proxy-logs/query-v2?limit=20&offset=0&search=gpt",
+      url: "/api/stats/proxy-logs?view=query&limit=20&offset=0&search=gpt",
     });
 
     expect(queryResponse.statusCode).toBe(200);
@@ -779,7 +779,7 @@ describe("stats proxy logs routes", () => {
 
     const metaResponse = await app.inject({
       method: "GET",
-      url: "/api/stats/proxy-logs/meta-v2?search=gpt",
+      url: "/api/stats/proxy-logs?view=meta&search=gpt",
     });
 
     expect(metaResponse.statusCode).toBe(200);

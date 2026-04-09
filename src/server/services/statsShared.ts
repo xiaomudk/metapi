@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { schema } from "../db/index.js";
 import {
   formatLocalDateTime,
+  getLocalHourAnchor,
   parseStoredUtcDateTime,
   type StoredUtcDateTimeInput,
 } from "./localTimeService.js";
@@ -82,15 +83,7 @@ export function buildSiteAvailabilitySummaries(
   logs: SiteAvailabilityLogRow[],
   now = new Date(),
 ) {
-  const endLocal = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-    now.getHours(),
-    0,
-    0,
-    0,
-  );
+  const endLocal = getLocalHourAnchor(now);
   const startLocal = new Date(
     endLocal.getTime() -
       (SITE_AVAILABILITY_BUCKET_COUNT - 1) * SITE_AVAILABILITY_BUCKET_MS,

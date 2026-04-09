@@ -114,19 +114,17 @@ async function fetchAuthenticatedResponse(
   }
 
   const token = requireAuthToken();
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${token}`,
-  };
-  if (fetchOptions.body) headers["Content-Type"] = "application/json";
+  const headers = new Headers(fetchOptions.headers ?? {});
+  headers.set("Authorization", `Bearer ${token}`);
+  if (fetchOptions.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
 
   try {
     const res = await fetch(url, {
       ...fetchOptions,
       signal: controller.signal,
-      headers: {
-        ...headers,
-        ...(fetchOptions.headers as Record<string, string>),
-      },
+      headers,
     });
     if (res.status === 401 || res.status === 403) {
       const hadToken = !!getAuthToken(localStorage);
@@ -320,25 +318,12 @@ async function proxyTestStreamRequest(
   data: ProxyTestRequestEnvelope,
   signal?: AbortSignal,
 ) {
-  const token = getAuthToken(localStorage);
-  if (!token) {
-    clearAuthSession(localStorage);
-    throw new Error("Session expired");
-  }
-  const response = await fetch("/api/test/proxy/stream", {
+  return fetchAuthenticatedResponse("/api/test/proxy/stream", {
     method: "POST",
     signal,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
     body: JSON.stringify(data),
+    timeoutMs: resolveProxyTestTimeoutMs(data),
   });
-  if (response.status === 401 || response.status === 403) {
-    clearAuthSession(localStorage);
-    throw new Error("Session expired");
-  }
-  return response;
 }
 
 export type ProxyTestJobResponse = {
@@ -802,11 +787,13 @@ export const api = {
     request(`/api/sites/${siteId}/available-models`),
 
   // Accounts
-  getAccounts: (params?: { includeOauth?: boolean }) =>
-    request(`/api/accounts${buildQueryString(params)}`),
+  getAccounts: async (params?: { includeOauth?: boolean }) => {
+    const result = await request<any>(`/api/accounts${buildQueryString(params)}`);
+    return Array.isArray(result?.accounts) ? result.accounts : result;
+  },
   getAccountsSnapshot: (options?: { refresh?: boolean }) =>
     request(
-      `/api/accounts/snapshot-v2${buildQueryString(options?.refresh ? { refresh: 1 } : undefined)}`,
+      `/api/accounts${buildQueryString(options?.refresh ? { refresh: 1 } : undefined)}`,
     ) as Promise<{
       generatedAt: string;
       accounts: any[];
@@ -1031,11 +1018,17 @@ export const api = {
   getDashboard: () => request("/api/stats/dashboard"),
   getDashboardSnapshot: (options?: { refresh?: boolean }) =>
     request(
-      `/api/stats/dashboard/snapshot-v2${buildQueryString(options?.refresh ? { refresh: 1 } : undefined)}`,
+      `/api/stats/dashboard${buildQueryString({
+        view: "summary",
+        ...(options?.refresh ? { refresh: 1 } : {}),
+      })}`,
     ),
   getDashboardInsights: (options?: { refresh?: boolean }) =>
     request(
-      `/api/stats/dashboard/insights-v2${buildQueryString(options?.refresh ? { refresh: 1 } : undefined)}`,
+      `/api/stats/dashboard${buildQueryString({
+        view: "insights",
+        ...(options?.refresh ? { refresh: 1 } : {}),
+      })}`,
     ),
   getProxyLogs: (params?: ProxyLogsQuery) =>
     request(
@@ -1043,7 +1036,10 @@ export const api = {
     ) as Promise<ProxyLogsResponse>,
   getProxyLogsQuery: (params?: ProxyLogsQuery) =>
     request(
-      `/api/stats/proxy-logs/query-v2${buildQueryString(params)}`,
+      `/api/stats/proxy-logs${buildQueryString({
+        ...params,
+        view: "query",
+      })}`,
     ) as Promise<{
       items: ProxyLogsResponse["items"];
       total: number;
@@ -1054,14 +1050,27 @@ export const api = {
     params?: Omit<ProxyLogsQuery, "limit" | "offset"> & {
       refresh?: number | boolean;
     },
-  ) =>
-    request(
-      `/api/stats/proxy-logs/meta-v2${buildQueryString(params)}`,
+  ) => {
+    const refresh =
+      params?.refresh === true
+        ? 1
+        : typeof params?.refresh === "number"
+          ? params.refresh
+          : undefined;
+    const queryParams = {
+      ...params,
+      view: "meta",
+      ...(refresh !== undefined ? { refresh } : {}),
+    } as Record<string, string | number | boolean | null | undefined>;
+    if (refresh === undefined) delete queryParams.refresh;
+    return request(
+      `/api/stats/proxy-logs${buildQueryString(queryParams)}`,
     ) as Promise<{
       clientOptions: ProxyLogsResponse["clientOptions"];
       summary: ProxyLogsResponse["summary"];
       sites: Array<{ id: number; name: string; status?: string | null }>;
-    }>,
+    }>;
+  },
   getProxyLogDetail: (id: number) =>
     request(`/api/stats/proxy-logs/${id}`) as Promise<ProxyLogDetail>,
   getProxyDebugTraces: (params?: { limit?: number }) =>
@@ -1076,15 +1085,25 @@ export const api = {
     request(`/api/models/check/${accountId}`, { method: "POST" }),
   getSiteDistribution: () => request("/api/stats/site-distribution"),
   getSiteTrend: (days = 7) => request(`/api/stats/site-trend?days=${days}`),
-  getSiteSnapshot: (days = 7, options?: { refresh?: boolean }) =>
-    request(
-      `/api/stats/site-snapshot-v2${buildQueryString({ days, ...(options?.refresh ? { refresh: 1 } : {}) })}`,
-    ) as Promise<{
-      generatedAt: string;
-      distribution: any[];
-      trend: any[];
-      sites: any[];
-    }>,
+  getSiteSnapshot: async (days = 7, options?: { refresh?: boolean }) => {
+    const query = buildQueryString({
+      days,
+      ...(options?.refresh ? { refresh: 1 } : {}),
+    });
+    const [distribution, trend, sites] = await Promise.all([
+      request<{ distribution: any[] }>(`/api/stats/site-distribution${query}`),
+      request<{ trend: any[] }>(`/api/stats/site-trend${query}`),
+      request<any[]>("/api/sites"),
+    ]);
+    return {
+      generatedAt: new Date().toISOString(),
+      distribution: Array.isArray(distribution?.distribution)
+        ? distribution.distribution
+        : [],
+      trend: Array.isArray(trend?.trend) ? trend.trend : [],
+      sites: Array.isArray(sites) ? sites : [],
+    };
+  },
   getModelBySite: (siteId?: number, days = 7) =>
     request(
       `/api/stats/model-by-site?${siteId ? `siteId=${siteId}&` : ""}days=${days}`,

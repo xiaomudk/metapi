@@ -1,4 +1,5 @@
 const DAY_MS = 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
 
 export type StoredUtcDateTimeInput = string | number | Date | null | undefined;
 
@@ -89,5 +90,24 @@ export function getLocalRangeStartUtc(days: number, now = new Date()): string {
   const normalizedDays = Math.max(1, Math.floor(days || 1));
   const localStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
   const start = new Date(localStart.getTime() - (normalizedDays - 1) * DAY_MS);
+  return formatUtcSqlDateTime(start);
+}
+
+export function getLocalHourAnchor(now = new Date()): Date {
+  return new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+    now.getHours(),
+    0,
+    0,
+    0,
+  );
+}
+
+export function getLocalHourRangeStartUtc(hours: number, now = new Date()): string {
+  const normalizedHours = Math.max(1, Math.floor(hours || 1));
+  const localAnchor = getLocalHourAnchor(now);
+  const start = new Date(localAnchor.getTime() - (normalizedHours - 1) * HOUR_MS);
   return formatUtcSqlDateTime(start);
 }

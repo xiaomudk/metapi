@@ -7,7 +7,7 @@ import {
 } from "./accountExtraConfig.js";
 import {
   buildRuntimeHealthForAccount,
-  type RuntimeHealthState,
+  type RuntimeHealthInfo,
 } from "./accountHealthService.js";
 import { parseCheckinRewardAmount } from "./checkinRewardParser.js";
 import { getLocalDayRangeUtc } from "./localTimeService.js";
@@ -30,7 +30,7 @@ export type AccountOverviewRow = typeof schema.accounts.$inferSelect & {
   capabilities: AccountCapabilities;
   todaySpend: number;
   todayReward: number;
-  runtimeHealth: RuntimeHealthState;
+  runtimeHealth: RuntimeHealthInfo;
 };
 
 export type AccountsSnapshotPayload = {

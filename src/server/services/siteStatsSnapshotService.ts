@@ -40,7 +40,8 @@ async function loadSiteStatsSnapshotPayload(
   const sinceDate = getLocalRangeStartUtc(days);
   const proxyLogSiteTrendFields = buildProxyLogSiteTrendSelectFields();
 
-  const [spendRows, trendRows, sites] = await Promise.all([
+  const [spendRows, trendRows, sites, accountDistributionRows] =
+    await Promise.all([
     db
       .select({
         siteId: schema.sites.id,
@@ -76,22 +77,25 @@ async function loadSiteStatsSnapshotPayload(
         ),
       )
       .all(),
-    db.select().from(schema.sites).all(),
+    db
+      .select()
+      .from(schema.sites)
+      .where(eq(schema.sites.status, "active"))
+      .all(),
+    db
+      .select({
+        siteId: schema.sites.id,
+        siteName: schema.sites.name,
+        platform: schema.sites.platform,
+        totalBalance: sql<number>`coalesce(sum(coalesce(${schema.accounts.balance}, 0)), 0)`,
+        accountCount: sql<number>`count(*)`,
+      })
+      .from(schema.accounts)
+      .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+      .where(eq(schema.sites.status, "active"))
+      .groupBy(schema.sites.id, schema.sites.name, schema.sites.platform)
+      .all(),
   ]);
-
-  const accountDistributionRows = await db
-    .select({
-      siteId: schema.sites.id,
-      siteName: schema.sites.name,
-      platform: schema.sites.platform,
-      totalBalance: sql<number>`coalesce(sum(coalesce(${schema.accounts.balance}, 0)), 0)`,
-      accountCount: sql<number>`count(*)`,
-    })
-    .from(schema.accounts)
-    .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-    .where(eq(schema.sites.status, "active"))
-    .groupBy(schema.sites.id, schema.sites.name, schema.sites.platform)
-    .all();
 
   const spendBySiteId = new Map<number, number>();
   for (const row of spendRows) {

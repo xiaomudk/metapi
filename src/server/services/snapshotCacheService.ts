@@ -24,7 +24,7 @@ export type SnapshotPersistenceAdapter<T> = {
 };
 
 type SnapshotCacheEntry<T> = {
-  payload: T;
+  payload?: T;
   generatedAtMs: number;
   expiresAtMs: number;
   staleUntilMs: number;
@@ -41,7 +41,30 @@ type ReadSnapshotOptions<T> = {
   persistence?: SnapshotPersistenceAdapter<T>;
 };
 
+const SNAPSHOT_CACHE_MAX_ENTRIES = 64;
 const snapshotCache = new Map<string, SnapshotCacheEntry<unknown>>();
+
+function getSnapshotCacheEntry<T>(cacheKey: string) {
+  const cached = snapshotCache.get(cacheKey) as SnapshotCacheEntry<T> | undefined;
+  if (!cached) return undefined;
+  snapshotCache.delete(cacheKey);
+  snapshotCache.set(cacheKey, cached as SnapshotCacheEntry<unknown>);
+  return cached;
+}
+
+function setSnapshotCacheEntry<T>(
+  cacheKey: string,
+  entry: SnapshotCacheEntry<T>,
+) {
+  snapshotCache.delete(cacheKey);
+  snapshotCache.set(cacheKey, entry as SnapshotCacheEntry<unknown>);
+
+  while (snapshotCache.size > SNAPSHOT_CACHE_MAX_ENTRIES) {
+    const oldestKey = snapshotCache.keys().next().value;
+    if (!oldestKey) break;
+    snapshotCache.delete(oldestKey);
+  }
+}
 
 function shouldBypassSnapshotCache() {
   return !!process.env.VITEST;
@@ -73,7 +96,7 @@ async function loadAndStoreSnapshot<T>(
     generatedAt: persistedRecord.generatedAt,
     cacheStatus: "miss",
   };
-  snapshotCache.set(cacheKey, {
+  setSnapshotCacheEntry(cacheKey, {
     payload,
     generatedAtMs: nowMs,
     expiresAtMs: nowMs + Math.max(1, ttlMs),
@@ -116,15 +139,13 @@ export async function readSnapshotCache<T>(
 
   const cacheKey = buildCacheKey(options.namespace, options.key);
   const nowMs = Date.now();
-  let cached = snapshotCache.get(cacheKey) as
-    | SnapshotCacheEntry<T>
-    | undefined;
+  let cached = getSnapshotCacheEntry<T>(cacheKey);
 
   if (!cached && !options.forceRefresh && options.persistence) {
     const persisted = await options.persistence.read();
     if (persisted) {
       cached = buildCacheEntryFromPersistedSnapshot(persisted);
-      snapshotCache.set(cacheKey, cached as SnapshotCacheEntry<unknown>);
+      setSnapshotCacheEntry(cacheKey, cached);
     }
   }
 
@@ -153,12 +174,16 @@ export async function readSnapshotCache<T>(
         staleMs,
         options.persistence,
       ).finally(() => {
-          const next = snapshotCache.get(cacheKey) as
-            | SnapshotCacheEntry<T>
-            | undefined;
+          const next = snapshotCache.get(cacheKey) as SnapshotCacheEntry<T> | undefined;
           if (next) delete next.inFlight;
         });
-      void cached.inFlight.catch(() => undefined);
+      void cached.inFlight.catch((error) => {
+        console.error(
+          `[snapshotCache] background refresh failed for ${cacheKey}:`,
+          error,
+        );
+      });
+      setSnapshotCacheEntry(cacheKey, cached);
     }
 
     return {
@@ -168,12 +193,14 @@ export async function readSnapshotCache<T>(
     };
   }
 
-  if (cached?.inFlight && !options.forceRefresh) {
+  if (cached?.inFlight) {
     const result = await cached.inFlight;
     return {
       ...result,
       cacheStatus:
-        cached.payload !== undefined ? "refresh" : result.cacheStatus,
+        options.forceRefresh || cached.payload !== undefined
+          ? "refresh"
+          : result.cacheStatus,
     };
   }
 
@@ -190,8 +217,8 @@ export async function readSnapshotCache<T>(
     if (next) delete next.inFlight;
   });
 
-  snapshotCache.set(cacheKey, {
-    payload: cached?.payload as T,
+  setSnapshotCacheEntry(cacheKey, {
+    payload: cached ? cached.payload : undefined,
     generatedAtMs: cached?.generatedAtMs ?? 0,
     expiresAtMs: cached?.expiresAtMs ?? 0,
     staleUntilMs: cached?.staleUntilMs ?? 0,
