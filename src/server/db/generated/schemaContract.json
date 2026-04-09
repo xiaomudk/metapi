@@ -349,6 +349,24 @@
           "notNull": false,
           "defaultValue": "datetime('now')",
           "primaryKey": false
+        },
+        "lease_owner": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "lease_token": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "lease_expires_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
         }
       }
     },
@@ -2282,6 +2300,14 @@
       "table": "admin_snapshots",
       "columns": [
         "stale_until"
+      ],
+      "unique": false
+    },
+    {
+      "name": "analytics_projection_checkpoints_lease_expires_at_idx",
+      "table": "analytics_projection_checkpoints",
+      "columns": [
+        "lease_expires_at"
       ],
       "unique": false
     },

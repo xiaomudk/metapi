@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { formatUtcSqlDateTime } from "../../services/localTimeService.js";
 
 type DbModule = typeof import("../../db/index.js");
 
@@ -54,6 +55,7 @@ describe("stats snapshot v2 routes", () => {
   });
 
   it("returns dashboard and site snapshot payloads for progressive loading", async () => {
+    const recentLogCreatedAt = formatUtcSqlDateTime(new Date());
     const site = await db
       .insert(schema.sites)
       .values({
@@ -86,7 +88,7 @@ describe("stats snapshot v2 routes", () => {
           totalTokens: 120,
           estimatedCost: 0.5,
           latencyMs: 320,
-          createdAt: new Date().toISOString(),
+          createdAt: recentLogCreatedAt,
         },
         {
           accountId: account.id,
@@ -96,7 +98,19 @@ describe("stats snapshot v2 routes", () => {
           totalTokens: 60,
           estimatedCost: 0.25,
           latencyMs: 220,
-          createdAt: new Date().toISOString(),
+          createdAt: recentLogCreatedAt,
+        },
+        {
+          accountId: account.id,
+          status: "success",
+          modelRequested: "gpt-4.1-mini",
+          modelActual: "gpt-4.1-mini",
+          totalTokens: 40,
+          estimatedCost: 0.1,
+          latencyMs: 180,
+          createdAt: formatUtcSqlDateTime(
+            new Date(Date.now() - (24 * 60 + 30) * 60_000),
+          ),
         },
       ])
       .run();
@@ -130,7 +144,7 @@ describe("stats snapshot v2 routes", () => {
     expect(insights.siteAvailability).toEqual([
       expect.objectContaining({ siteId: site.id }),
     ]);
-    expect(insights.modelAnalysis.totals.calls).toBe(2);
+    expect(insights.modelAnalysis.totals.calls).toBe(3);
 
     const siteDistributionResponse = await app.inject({
       method: "GET",
@@ -141,7 +155,7 @@ describe("stats snapshot v2 routes", () => {
       distribution: Array<{ siteId: number; totalSpend: number }>;
     };
     expect(siteDistribution.distribution).toEqual([
-      expect.objectContaining({ siteId: site.id, totalSpend: 0.75 }),
+      expect.objectContaining({ siteId: site.id, totalSpend: 0.85 }),
     ]);
 
     const siteTrendResponse = await app.inject({

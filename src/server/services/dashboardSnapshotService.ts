@@ -125,16 +125,20 @@ async function loadDashboardSummaryPayload(): Promise<DashboardSummaryPayload> {
       .get(),
     db
       .select({
-        total: sql<number>`coalesce(sum(coalesce(${schema.siteHourUsage.totalCalls}, 0)), 0)`,
-        success: sql<number>`coalesce(sum(coalesce(${schema.siteHourUsage.successCalls}, 0)), 0)`,
-        failed: sql<number>`coalesce(sum(coalesce(${schema.siteHourUsage.failedCalls}, 0)), 0)`,
-        totalTokens: sql<number>`coalesce(sum(coalesce(${schema.siteHourUsage.totalTokens}, 0)), 0)`,
+        total: sql<number>`count(*)`,
+        success: sql<number>`coalesce(sum(case when ${schema.proxyLogs.status} = 'success' then 1 else 0 end), 0)`,
+        failed: sql<number>`coalesce(sum(case when ${schema.proxyLogs.status} = 'success' then 0 else 1 end), 0)`,
+        totalTokens: sql<number>`coalesce(sum(coalesce(${schema.proxyLogs.totalTokens}, 0)), 0)`,
       })
-      .from(schema.siteHourUsage)
-      .innerJoin(schema.sites, eq(schema.siteHourUsage.siteId, schema.sites.id))
+      .from(schema.proxyLogs)
+      .innerJoin(
+        schema.accounts,
+        eq(schema.proxyLogs.accountId, schema.accounts.id),
+      )
+      .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
       .where(
         and(
-          gte(schema.siteHourUsage.bucketStartUtc, last24hDate),
+          gte(schema.proxyLogs.createdAt, last24hDate),
           eq(schema.sites.status, "active"),
         ),
       )

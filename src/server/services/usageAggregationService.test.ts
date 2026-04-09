@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -167,5 +168,73 @@ describe("usageAggregationService", () => {
     );
     expect(recomputedDayRows[0].totalSummarySpend).toBeCloseTo(0.34, 6);
     expect(recomputedDayRows[0].totalSiteSpend).toBeCloseTo(0.34, 6);
+  });
+
+  it("skips projection while another process lease is active and clears lease after success", async () => {
+    const site = await db
+      .insert(schema.sites)
+      .values({
+        name: "leased-site",
+        url: "https://leased.example.com",
+        platform: "new-api",
+        status: "active",
+      })
+      .returning()
+      .get();
+    const account = await db
+      .insert(schema.accounts)
+      .values({
+        siteId: site.id,
+        username: "leased-user",
+        accessToken: "leased-token",
+        status: "active",
+      })
+      .returning()
+      .get();
+
+    await db.insert(schema.proxyLogs).values({
+      accountId: account.id,
+      status: "success",
+      modelRequested: "gpt-5",
+      modelActual: "gpt-5",
+      totalTokens: 10,
+      estimatedCost: 0.02,
+      latencyMs: 50,
+      createdAt: formatUtcSqlDateTime(new Date("2026-04-08T03:00:00.000Z")),
+    }).run();
+
+    await db.insert(schema.analyticsProjectionCheckpoints).values({
+      projectorKey: "usage-aggregates-v1",
+      timeZone: "Local",
+      lastProxyLogId: 0,
+      leaseOwner: "other-process",
+      leaseToken: "other-token",
+      leaseExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+    }).run();
+
+    const blockedPass = await runUsageAggregationProjectionPass();
+    expect(blockedPass.processedLogs).toBe(0);
+    expect(await db.select().from(schema.siteDayUsage).all()).toHaveLength(0);
+
+    await db
+      .update(schema.analyticsProjectionCheckpoints)
+      .set({
+        leaseExpiresAt: new Date(Date.now() - 60_000).toISOString(),
+      })
+      .where(eq(schema.analyticsProjectionCheckpoints.projectorKey, "usage-aggregates-v1"))
+      .run();
+
+    const successfulPass = await runUsageAggregationProjectionPass();
+    expect(successfulPass.processedLogs).toBe(1);
+
+    const checkpoint = await db
+      .select()
+      .from(schema.analyticsProjectionCheckpoints)
+      .where(eq(schema.analyticsProjectionCheckpoints.projectorKey, "usage-aggregates-v1"))
+      .get();
+    expect(checkpoint?.leaseOwner).toBeNull();
+    expect(checkpoint?.leaseToken).toBeNull();
+    expect(checkpoint?.leaseExpiresAt).toBeNull();
+    expect(checkpoint?.lastError).toBeNull();
   });
 });

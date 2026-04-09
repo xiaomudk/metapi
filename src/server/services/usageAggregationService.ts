@@ -1,4 +1,6 @@
-import { asc, eq, gt, gte, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, gte, isNull, lte, or, sql } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
+import { hostname } from 'node:os';
 import { db, schema } from '../db/index.js';
 import { fallbackTokenCost } from './modelPricingService.js';
 import {
@@ -15,8 +17,14 @@ const USAGE_PROJECTOR_KEY = 'usage-aggregates-v1';
 const PROJECTION_BATCH_SIZE = 1_000;
 const PROJECTION_MAX_BATCHES_PER_PASS = 120;
 const PROJECTION_INTERVAL_MS = 5_000;
+const PROJECTION_LEASE_MS = 10 * 60_000;
 
 type ProjectionCheckpointRow = typeof schema.analyticsProjectionCheckpoints.$inferSelect;
+type ProjectionLease = {
+  owner: string;
+  token: string;
+  expiresAt: string;
+};
 
 type ProjectionPassOptions = {
   maxBatches?: number;
@@ -126,6 +134,9 @@ function emptyCheckpoint(): ProjectionCheckpointRow {
     recomputeReason: null,
     recomputeStartedAt: null,
     recomputeCompletedAt: null,
+    leaseOwner: null,
+    leaseToken: null,
+    leaseExpiresAt: null,
     lastProjectedAt: null,
     lastSuccessfulAt: null,
     lastError: null,
@@ -193,6 +204,20 @@ function clearAnalyticsSnapshots() {
   clearSnapshotCache('dashboard-insights');
 }
 
+function buildProjectionLeaseOwner() {
+  const host = String(hostname() || process.env.HOSTNAME || 'local').trim() || 'local';
+  return `${host}:${process.pid}`;
+}
+
+function buildProjectionLeaseExpiry(nowMs = Date.now()) {
+  return new Date(nowMs + PROJECTION_LEASE_MS).toISOString();
+}
+
+function normalizeProjectionError(error: unknown) {
+  if (error instanceof Error) return error.message;
+  return String(error || 'unknown projection error');
+}
+
 async function readProjectionCheckpoint(): Promise<ProjectionCheckpointRow> {
   const row = await db
     .select()
@@ -200,6 +225,75 @@ async function readProjectionCheckpoint(): Promise<ProjectionCheckpointRow> {
     .where(eq(schema.analyticsProjectionCheckpoints.projectorKey, USAGE_PROJECTOR_KEY))
     .get();
   return row || emptyCheckpoint();
+}
+
+async function ensureProjectionCheckpointExists() {
+  const nowIso = new Date().toISOString();
+  await (db.insert(schema.analyticsProjectionCheckpoints).values({
+    projectorKey: USAGE_PROJECTOR_KEY,
+    timeZone: getResolvedTimeZone(),
+    lastProxyLogId: 0,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+  }) as any)
+    .onConflictDoNothing({
+      target: schema.analyticsProjectionCheckpoints.projectorKey,
+    })
+    .run();
+}
+
+async function tryAcquireProjectionLease(): Promise<ProjectionLease | null> {
+  await ensureProjectionCheckpointExists();
+  const nowIso = new Date().toISOString();
+  const lease: ProjectionLease = {
+    owner: buildProjectionLeaseOwner(),
+    token: randomUUID(),
+    expiresAt: buildProjectionLeaseExpiry(),
+  };
+
+  const result = await db
+    .update(schema.analyticsProjectionCheckpoints)
+    .set({
+      leaseOwner: lease.owner,
+      leaseToken: lease.token,
+      leaseExpiresAt: lease.expiresAt,
+      updatedAt: nowIso,
+    })
+    .where(
+      and(
+        eq(schema.analyticsProjectionCheckpoints.projectorKey, USAGE_PROJECTOR_KEY),
+        or(
+          isNull(schema.analyticsProjectionCheckpoints.leaseExpiresAt),
+          lte(schema.analyticsProjectionCheckpoints.leaseExpiresAt, nowIso),
+        ),
+      ),
+    )
+    .run();
+
+  return result.changes > 0 ? lease : null;
+}
+
+async function releaseProjectionLease(
+  lease: ProjectionLease,
+  options?: { error?: unknown },
+) {
+  const nowIso = new Date().toISOString();
+  await db
+    .update(schema.analyticsProjectionCheckpoints)
+    .set({
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      lastError: options?.error ? normalizeProjectionError(options.error) : null,
+      updatedAt: nowIso,
+    })
+    .where(
+      and(
+        eq(schema.analyticsProjectionCheckpoints.projectorKey, USAGE_PROJECTOR_KEY),
+        eq(schema.analyticsProjectionCheckpoints.leaseToken, lease.token),
+      ),
+    )
+    .run();
 }
 
 async function writeProjectionCheckpoint(
@@ -217,6 +311,9 @@ async function writeProjectionCheckpoint(
     recomputeReason: checkpoint.recomputeReason ?? null,
     recomputeStartedAt: checkpoint.recomputeStartedAt ?? null,
     recomputeCompletedAt: checkpoint.recomputeCompletedAt ?? null,
+    leaseOwner: checkpoint.leaseOwner ?? null,
+    leaseToken: checkpoint.leaseToken ?? null,
+    leaseExpiresAt: checkpoint.leaseExpiresAt ?? null,
     lastProjectedAt: checkpoint.lastProjectedAt ?? nowIso,
     lastSuccessfulAt: checkpoint.lastSuccessfulAt ?? nowIso,
     lastError: checkpoint.lastError ?? null,
@@ -236,6 +333,9 @@ async function writeProjectionCheckpoint(
         recomputeReason: values.recomputeReason,
         recomputeStartedAt: values.recomputeStartedAt,
         recomputeCompletedAt: values.recomputeCompletedAt,
+        leaseOwner: values.leaseOwner,
+        leaseToken: values.leaseToken,
+        leaseExpiresAt: values.leaseExpiresAt,
         lastProjectedAt: values.lastProjectedAt,
         lastSuccessfulAt: values.lastSuccessfulAt,
         lastError: values.lastError,
@@ -482,6 +582,7 @@ async function applyProjectionBatch(
   const delta = buildProjectionBatchDelta(rows);
   const updatedAt = new Date().toISOString();
   const nextCheckpoint = {
+    ...checkpoint,
     lastProxyLogId: lastRow.id,
     watermarkCreatedAt:
       typeof lastRow.createdAt === 'string'
@@ -489,7 +590,10 @@ async function applyProjectionBatch(
         : String(lastRow.createdAt || ''),
     recomputeFromId: checkpoint.recomputeFromId ?? null,
     recomputeRequestedAt: checkpoint.recomputeRequestedAt ?? null,
+    leaseExpiresAt: checkpoint.leaseToken ? buildProjectionLeaseExpiry() : checkpoint.leaseExpiresAt,
     lastProjectedAt: updatedAt,
+    lastSuccessfulAt: updatedAt,
+    lastError: null,
     createdAt: checkpoint.createdAt ?? updatedAt,
   };
 
@@ -533,6 +637,7 @@ async function applyPendingRecompute(checkpoint: ProjectionCheckpointRow) {
       ...checkpoint,
       recomputeFromId: null,
       recomputeRequestedAt: null,
+      leaseExpiresAt: checkpoint.leaseToken ? buildProjectionLeaseExpiry() : checkpoint.leaseExpiresAt,
       lastProjectedAt: new Date().toISOString(),
     };
     await db.transaction(async (tx) => {
@@ -564,6 +669,7 @@ async function applyPendingRecompute(checkpoint: ProjectionCheckpointRow) {
     watermarkCreatedAt: null,
     recomputeFromId: null,
     recomputeRequestedAt: null,
+    leaseExpiresAt: checkpoint.leaseToken ? buildProjectionLeaseExpiry() : checkpoint.leaseExpiresAt,
     lastProjectedAt: new Date().toISOString(),
   };
 
@@ -581,37 +687,58 @@ async function applyPendingRecompute(checkpoint: ProjectionCheckpointRow) {
 async function runUsageAggregationProjectionPassImpl(
   options: ProjectionPassOptions = {},
 ): Promise<ProjectionPassResult> {
-  let checkpoint = await readProjectionCheckpoint();
-  const hadPendingRecompute = normalizeNonNegativeInt(checkpoint.recomputeFromId) > 0;
-  if (hadPendingRecompute) {
-    checkpoint = await applyPendingRecompute(checkpoint);
+  const lease = await tryAcquireProjectionLease();
+  if (!lease) {
+    const checkpoint = await readProjectionCheckpoint();
+    return {
+      processedLogs: 0,
+      watermarkId: checkpoint.lastProxyLogId,
+      recomputed: false,
+    };
   }
 
-  let processedLogs = 0;
-  const maxBatches = Math.max(
-    1,
-    Math.trunc(options.maxBatches || PROJECTION_MAX_BATCHES_PER_PASS),
-  );
-
-  for (let index = 0; index < maxBatches; index += 1) {
-    const rows = await fetchProjectionBatch(checkpoint.lastProxyLogId, PROJECTION_BATCH_SIZE);
-    if (rows.length <= 0) {
-      break;
+  try {
+    let checkpoint: ProjectionCheckpointRow = {
+      ...(await readProjectionCheckpoint()),
+      leaseOwner: lease.owner,
+      leaseToken: lease.token,
+      leaseExpiresAt: lease.expiresAt,
+    };
+    const hadPendingRecompute = normalizeNonNegativeInt(checkpoint.recomputeFromId) > 0;
+    if (hadPendingRecompute) {
+      checkpoint = await applyPendingRecompute(checkpoint);
     }
 
-    checkpoint = await applyProjectionBatch(checkpoint, rows);
-    processedLogs += rows.length;
+    let processedLogs = 0;
+    const maxBatches = Math.max(
+      1,
+      Math.trunc(options.maxBatches || PROJECTION_MAX_BATCHES_PER_PASS),
+    );
 
-    if (rows.length < PROJECTION_BATCH_SIZE) {
-      break;
+    for (let index = 0; index < maxBatches; index += 1) {
+      const rows = await fetchProjectionBatch(checkpoint.lastProxyLogId, PROJECTION_BATCH_SIZE);
+      if (rows.length <= 0) {
+        break;
+      }
+
+      checkpoint = await applyProjectionBatch(checkpoint, rows);
+      processedLogs += rows.length;
+
+      if (rows.length < PROJECTION_BATCH_SIZE) {
+        break;
+      }
     }
+
+    await releaseProjectionLease(lease);
+    return {
+      processedLogs,
+      watermarkId: checkpoint.lastProxyLogId,
+      recomputed: hadPendingRecompute,
+    };
+  } catch (error) {
+    await releaseProjectionLease(lease, { error });
+    throw error;
   }
-
-  return {
-    processedLogs,
-    watermarkId: checkpoint.lastProxyLogId,
-    recomputed: hadPendingRecompute,
-  };
 }
 
 export async function runUsageAggregationProjectionPass(

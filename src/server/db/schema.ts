@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real, uniqueIndex, index } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real, uniqueIndex, index, check } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 
 export const sites = sqliteTable('sites', {
@@ -395,6 +395,9 @@ export const analyticsProjectionCheckpoints = sqliteTable('analytics_projection_
   timeZone: text('time_zone').notNull().default('Local'),
   lastProxyLogId: integer('last_proxy_log_id').notNull().default(0),
   watermarkCreatedAt: text('watermark_created_at'),
+  leaseOwner: text('lease_owner'),
+  leaseToken: text('lease_token'),
+  leaseExpiresAt: text('lease_expires_at'),
   recomputeFromId: integer('recompute_from_id'),
   recomputeRequestedAt: text('recompute_requested_at'),
   recomputeReason: text('recompute_reason'),
@@ -407,6 +410,7 @@ export const analyticsProjectionCheckpoints = sqliteTable('analytics_projection_
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),
 }, (table) => ({
   recomputeFromIdIdx: index('analytics_projection_checkpoints_recompute_from_id_idx').on(table.recomputeFromId),
+  leaseExpiresAtIdx: index('analytics_projection_checkpoints_lease_expires_at_idx').on(table.leaseExpiresAt),
 }));
 
 export const siteDayUsage = sqliteTable('site_day_usage', {
@@ -427,6 +431,10 @@ export const siteDayUsage = sqliteTable('site_day_usage', {
   daySiteUnique: uniqueIndex('site_day_usage_day_site_unique').on(table.localDay, table.siteId),
   dayIdx: index('site_day_usage_day_idx').on(table.localDay),
   siteIdx: index('site_day_usage_site_id_idx').on(table.siteId),
+  nonNegative: check(
+    'site_day_usage_non_negative',
+    sql`${table.totalCalls} >= 0 and ${table.successCalls} >= 0 and ${table.failedCalls} >= 0 and ${table.totalTokens} >= 0 and ${table.totalSummarySpend} >= 0 and ${table.totalSiteSpend} >= 0 and ${table.totalLatencyMs} >= 0 and ${table.latencyCount} >= 0`,
+  ),
 }));
 
 export const siteHourUsage = sqliteTable('site_hour_usage', {
@@ -447,6 +455,10 @@ export const siteHourUsage = sqliteTable('site_hour_usage', {
   hourSiteUnique: uniqueIndex('site_hour_usage_hour_site_unique').on(table.bucketStartUtc, table.siteId),
   hourIdx: index('site_hour_usage_hour_idx').on(table.bucketStartUtc),
   siteIdx: index('site_hour_usage_site_id_idx').on(table.siteId),
+  nonNegative: check(
+    'site_hour_usage_non_negative',
+    sql`${table.totalCalls} >= 0 and ${table.successCalls} >= 0 and ${table.failedCalls} >= 0 and ${table.totalTokens} >= 0 and ${table.totalSummarySpend} >= 0 and ${table.totalSiteSpend} >= 0 and ${table.totalLatencyMs} >= 0 and ${table.latencyCount} >= 0`,
+  ),
 }));
 
 export const modelDayUsage = sqliteTable('model_day_usage', {
@@ -468,6 +480,10 @@ export const modelDayUsage = sqliteTable('model_day_usage', {
   dayIdx: index('model_day_usage_day_idx').on(table.localDay),
   siteIdx: index('model_day_usage_site_id_idx').on(table.siteId),
   modelIdx: index('model_day_usage_model_idx').on(table.model),
+  nonNegative: check(
+    'model_day_usage_non_negative',
+    sql`${table.totalCalls} >= 0 and ${table.successCalls} >= 0 and ${table.failedCalls} >= 0 and ${table.totalTokens} >= 0 and ${table.totalSpend} >= 0 and ${table.totalLatencyMs} >= 0 and ${table.latencyCount} >= 0`,
+  ),
 }));
 
 export const downstreamApiKeys = sqliteTable('downstream_api_keys', {
