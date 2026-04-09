@@ -1443,8 +1443,9 @@ export async function statsRoutes(app: FastifyInstance) {
     },
   );
 
-  // codeql[js/missing-rate-limiting]
-
+  // False positive: this Fastify route is already throttled by
+  // `limitModelTokenCandidatesRead`, which is created by `createRateLimitGuard`.
+  // lgtm[js/missing-rate-limiting]
   app.get(
     "/api/models/token-candidates",
     { preHandler: [limitModelTokenCandidatesRead] },
