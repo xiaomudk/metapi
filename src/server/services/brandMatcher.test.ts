@@ -23,6 +23,10 @@ describe('brandMatcher', () => {
     expect(getBlockedBrandRules(['OpenRouter', 'OpenRouter', 'Unknown Brand'])).toEqual(['OpenRouter']);
   });
 
+  it('canonicalizes blocked brand names before validating them', () => {
+    expect(getBlockedBrandRules(['openai', '  aws   bedrock  ', 'unknown brand', 'OPENAI'])).toEqual(['OpenAI', 'AWS Bedrock']);
+  });
+
   it('uses the shared frontend detection result for global brand blocking', () => {
     const providerRules = getBlockedBrandRules(['OpenRouter', 'Groq', '百炼', 'LongCat']);
     expect(isModelBlockedByBrand('openrouter/openrouter-auto', providerRules)).toBe(true);
