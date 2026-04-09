@@ -498,6 +498,8 @@ export async function accountsRoutes(app: FastifyInstance) {
   );
 
   // Login to a site and auto-create account
+  // codeql[js/missing-rate-limiting]
+
   app.post<{ Body: unknown }>(
     "/api/accounts/login",
     { preHandler: [limitAccountLogin] },
@@ -663,6 +665,8 @@ export async function accountsRoutes(app: FastifyInstance) {
   );
 
   // Verify credentials against a site.
+  // codeql[js/missing-rate-limiting]
+
   app.post<{ Body: unknown }>(
     "/api/accounts/verify-token",
     { preHandler: [limitAccountVerifyToken] },

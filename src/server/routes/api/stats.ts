@@ -1443,6 +1443,8 @@ export async function statsRoutes(app: FastifyInstance) {
     },
   );
 
+  // codeql[js/missing-rate-limiting]
+
   app.get(
     "/api/models/token-candidates",
     { preHandler: [limitModelTokenCandidatesRead] },
