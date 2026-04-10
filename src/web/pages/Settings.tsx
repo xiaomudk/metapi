@@ -647,6 +647,14 @@ export default function Settings() {
   const applyVisualPayloadRules = (
     nextRulesOrUpdater: VisualPayloadRule[] | ((current: VisualPayloadRule[]) => VisualPayloadRule[]),
   ) => {
+    if (
+      payloadAdvancedDirty
+      && typeof globalThis.confirm === 'function'
+      && !globalThis.confirm('高级 JSON 有未同步修改，继续会覆盖这些内容。是否继续？')
+    ) {
+      return;
+    }
+
     setPayloadVisualRules((currentRules) => {
       const nextRules = typeof nextRulesOrUpdater === 'function'
         ? nextRulesOrUpdater(currentRules)
