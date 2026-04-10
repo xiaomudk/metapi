@@ -6786,7 +6786,7 @@ textarea {
 }
 
 @keyframes route-detail-panel-in {
-  from {
+  0% {
     opacity: 0;
     clip-path: inset(0 0 100% 0 round 16px);
     transform: translateY(-8px) scale(0.992);
@@ -6798,7 +6798,7 @@ textarea {
     transform: translateY(0) scale(1.006);
   }
 
-  to {
+  100% {
     opacity: 1;
     clip-path: inset(0 0 0 0 round 16px);
     transform: translateY(0) scale(1);
@@ -6806,13 +6806,13 @@ textarea {
 }
 
 @keyframes route-detail-panel-out {
-  from {
+  0% {
     opacity: 1;
     clip-path: inset(0 0 0 0 round 16px);
     transform: translateY(0) scale(1);
   }
 
-  to {
+  100% {
     opacity: 0;
     clip-path: inset(0 0 100% 0 round 16px);
     transform: translateY(-6px) scale(0.994);
