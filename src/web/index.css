@@ -6777,6 +6777,12 @@ textarea {
 }
 
 .route-detail-panel-presence.is-open .route-card-detail-panel {
+  opacity: 1;
+  clip-path: inset(0 0 0 0 round 16px);
+  transform: translateY(0) scale(1);
+}
+
+.route-detail-panel-presence.is-entering .route-card-detail-panel {
   will-change: transform, opacity, clip-path;
   animation: route-detail-panel-in 0.26s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
@@ -6787,7 +6793,7 @@ textarea {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .route-detail-panel-presence.is-open .route-card-detail-panel,
+  .route-detail-panel-presence.is-entering .route-card-detail-panel,
   .route-detail-panel-presence.is-closing .route-card-detail-panel {
     animation: none;
   }
