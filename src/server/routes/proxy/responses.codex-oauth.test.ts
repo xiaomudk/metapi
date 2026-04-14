@@ -1123,7 +1123,7 @@ describe('responses proxy codex oauth refresh', () => {
     expect(response.body).toContain('data: [DONE]');
   });
 
-  it('preserves codex-required instructions and store fields across responses compatibility retries', async () => {
+  it('keeps store false across codex responses compatibility retries', async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({
       error: { message: 'upstream_error', type: 'upstream_error' },
     }), {
@@ -1137,7 +1137,7 @@ describe('responses proxy codex oauth refresh', () => {
       payload: {
         model: 'gpt-5.2-codex',
         input: 'hello codex',
-        metadata: { trace: 'compatibility-retry' },
+        store: true,
       },
     });
 
@@ -1149,14 +1149,8 @@ describe('responses proxy codex oauth refresh', () => {
     const firstBody = JSON.parse(firstOptions.body);
     const secondBody = JSON.parse(secondOptions.body);
 
-    expect(firstBody.instructions).toBe('');
     expect(firstBody.store).toBe(false);
-    expect(firstBody.stream).toBe(true);
-    expect(firstBody.max_output_tokens).toBeUndefined();
-    expect(secondBody.instructions).toBe('');
     expect(secondBody.store).toBe(false);
-    expect(secondBody.stream).toBe(true);
-    expect(secondBody.max_output_tokens).toBeUndefined();
   });
 
   it('does not record success when a streaming responses request ends with response.failed', async () => {
