@@ -1618,6 +1618,29 @@ describe('convertResponsesBodyToOpenAiBody', () => {
     }
   });
 
+  it('preserves previous_response_id in strict compatibility bodies for tool-output turns', () => {
+    const input = [{
+      type: 'function_call_output',
+      call_id: 'call_3',
+      output: '{"ok":true}',
+    }];
+
+    const candidates = buildResponsesCompatibilityBodies({
+      model: 'gpt-5.4',
+      input,
+      stream: true,
+      previous_response_id: 'resp_prev_tool_3',
+      temperature: 0.7,
+    });
+
+    expect(candidates).toContainEqual({
+      model: 'gpt-5.4',
+      input,
+      stream: true,
+      previous_response_id: 'resp_prev_tool_3',
+    });
+  });
+
   it('maps native tool choices and strict function tools into OpenAI-compatible fallback bodies', () => {
     const result = convertResponsesBodyToOpenAiBody(
       {

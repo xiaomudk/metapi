@@ -230,6 +230,9 @@ function buildStrictResponsesBody(
     model,
     input: body.input,
     stream: body.stream === true,
+    ...(body.previous_response_id !== undefined
+      ? { previous_response_id: cloneJsonValue(body.previous_response_id) }
+      : {}),
     ...(body.tools !== undefined ? { tools: cloneJsonValue(body.tools) } : {}),
     ...(body.tool_choice !== undefined ? { tool_choice: cloneJsonValue(body.tool_choice) } : {}),
     ...(explicitInstructions !== null
